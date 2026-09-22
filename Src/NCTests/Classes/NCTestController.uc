@@ -1,0 +1,1 @@
+class NCTestController extends PlayerController;
