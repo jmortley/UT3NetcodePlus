@@ -61,10 +61,13 @@ function Service()
         {
             PC=PlayerController(Drivers[i].Owner);
             W=NCShockRifle(PC.Pawn.Weapon);
-            // Three cores, one beam, and the stock three-ammo combo surcharge.
-            Passed=Passed && W != None && W.AmmoCount == W.MaxAmmoCount-7 && W.bWasACombo && !W.PendingFire(0) && !W.PendingFire(1);
+            // Three flying cores, one early wall impact, one beam, and combo surcharge.
+            Passed=Passed && W != None && W.AmmoCount == W.MaxAmmoCount-8 && Drivers[i].bComboVerified && !W.PendingFire(0) && !W.PendingFire(1);
+            if (NCTestNetGame(WorldInfo.Game).TestLag >= 60)
+                Passed=Passed && Drivers[i].OpenFlightCatchupCount == 3 && Abs(Drivers[i].OpenFlightCatchupSeconds-0.06) < 0.001;
             LogInternal("[NCNet] server-weapon ammo=" $ W.AmmoCount $ " state=" $ W.GetStateName()
-                $ " pending0=" $ W.PendingFire(0) $ " pending1=" $ W.PendingFire(1) $ " combo=" $ W.bWasACombo $ " rewind=" $ N.RewindFor(PC.Pawn));
+                $ " pending0=" $ W.PendingFire(0) $ " pending1=" $ W.PendingFire(1) $ " combo=" $ W.bWasACombo $ " rewind=" $ N.RewindFor(PC.Pawn)
+                $ " caught-up=" $ W.CaughtUpCoreCount $ " catchup-seconds=" $ W.LastCoreCatchup);
             Drivers[i].ClientQuit();
         }
         for (i=0;i<N.Pings.Length;i++)

@@ -21,7 +21,9 @@ var Controller MatchController;
 var float LastRequestAt;
 var bool bPredictionEnabled;
 // Local diagnostics: no replication or effect on firing decisions.
-var int PredictedVisualCount, MatchedVisualCount;
+var int PredictedVisualCount, MatchedVisualCount, RetiredVisualCount;
+var int CaughtUpCoreCount;
+var float LastCoreCatchup;
 
 replication
 {
@@ -49,15 +51,24 @@ simulated function Projectile ProjectileFire()
     local NCPredictedCore Visual;
     local CoreRecord Record;
     local vector Start;
+    local float Advanced;
     P=Super.ProjectileFire();
     if (CurrentFireMode != 1 || Instigator == None) return P;
     if (Role == ROLE_Authority)
     {
         CheckMatchOwner();
-        if (NCShockBall(P) != None && !P.bDeleteMe && PlayerController(Instigator.Controller) != None && !Instigator.IsLocallyControlled())
+        if (PlayerController(Instigator.Controller) != None && !Instigator.IsLocallyControlled())
         {
             Record.Core=NCShockBall(P);
+            if (Record.Core != None)
+            {
+                if (Rewind == None) Rewind=class'NCRewind'.static.Find(self);
+                if (Rewind != None) Advanced=Record.Core.AdvanceAtSpawn(Rewind.CoreCatchupFor(Instigator));
+                if (Advanced > 0) { CaughtUpCoreCount++; LastCoreCatchup=Advanced; }
+            }
             Record.Time=WorldInfo.TimeSeconds;
+            // Retain even a failed spawn/early impact as a completed shot slot.
+            // Its metadata retires its own visual instead of matching the next core.
             UnmatchedCores.AddItem(Record);
             ServiceMatches();
         }
@@ -117,18 +128,32 @@ function ServiceMatches()
 {
     local int i;
     for (i=UnmatchedCores.Length-1;i>=0;i--)
-        if (UnmatchedCores[i].Core == None || UnmatchedCores[i].Core.bDeleteMe
-            || UnmatchedCores[i].Core.bShuttingDown || WorldInfo.TimeSeconds-UnmatchedCores[i].Time > 0.25)
+        if (WorldInfo.TimeSeconds-UnmatchedCores[i].Time > 0.25)
             UnmatchedCores.Remove(i,1);
     for (i=Requests.Length-1;i>=0;i--)
         if (WorldInfo.TimeSeconds-Requests[i].Time > 0.25) Requests.Remove(i,1);
     while (UnmatchedCores.Length > 0 && Requests.Length > 0)
     {
-        UnmatchedCores[0].Core.SetVisualIdentity(self,Requests[0].Id);
+        if (UnmatchedCores[0].Core != None && !UnmatchedCores[0].Core.bDeleteMe && !UnmatchedCores[0].Core.bShuttingDown)
+            UnmatchedCores[0].Core.SetVisualIdentity(self,Requests[0].Id);
+        else ClientRetireVisual(Requests[0].Id);
         Requests.Remove(0,1);
         UnmatchedCores.Remove(0,1);
     }
     while (UnmatchedCores.Length > 4) UnmatchedCores.Remove(0,1);
+}
+
+reliable client function ClientRetireVisual(int Id)
+{
+    local int i;
+    for (i=0;i<Visuals.Length;i++)
+        if (Visuals[i] != None && !Visuals[i].bDeleteMe && Visuals[i].VisualId == Id)
+        {
+            Visuals[i].Destroy();
+            RetiredVisualCount++;
+            break;
+        }
+    PruneVisuals();
 }
 
 simulated function MatchVisual(int Id, NCShockBall Core)

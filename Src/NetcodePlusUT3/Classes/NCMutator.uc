@@ -2,6 +2,7 @@
 class NCMutator extends UTMutator config(NetcodePlusUT3);
 
 var config float MaxRewindSeconds;
+var config float MaxCoreCatchupSeconds;
 var config bool bPredictCores;
 var NCRewind Rewind;
 
@@ -11,15 +12,17 @@ function PostBeginPlay()
     local int i;
     Super.PostBeginPlay();
     MaxRewindSeconds=FClamp(MaxRewindSeconds,0.0,0.25);
+    MaxCoreCatchupSeconds=FClamp(MaxCoreCatchupSeconds,0.0,0.10);
     Rewind=Spawn(class'NCRewind');
     if (Rewind == None) { LogInternal("[NetcodePlusUT3] Initialization failed: history service"); return; }
     Rewind.MaxRewindSeconds=MaxRewindSeconds;
+    Rewind.MaxCoreCatchupSeconds=MaxCoreCatchupSeconds;
     G=UTGame(WorldInfo.Game);
     if (G != None)
         for (i=0;i<G.DefaultInventory.Length;i++)
             if (G.DefaultInventory[i] == class'UTWeap_ShockRifle') G.DefaultInventory[i]=class'NCShockRifle';
     SetTimer(1.0,true,'RegisterPlayers');
-    LogInternal("[NetcodePlusUT3] Shock alpha: beam rewind, predicted core visuals, stock firing and combos");
+    LogInternal("[NetcodePlusUT3] Shock alpha: beam rewind, core prediction/catch-up, stock firing and combos");
 }
 
 function RegisterPlayers()
@@ -66,6 +69,7 @@ function bool CheckReplacement(Actor Other)
 defaultproperties
 {
     MaxRewindSeconds=0.15
+    MaxCoreCatchupSeconds=0.06
     bPredictCores=true
     GroupNames(0)="NetcodePlusUT3"
 }

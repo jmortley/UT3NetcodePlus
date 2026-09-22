@@ -2,6 +2,7 @@
 class NCRewind extends Info;
 
 var float MaxRewindSeconds;
+var float MaxCoreCatchupSeconds;
 var array<NCPawnHistory> Histories;
 var array<NCPing> Pings;
 
@@ -24,11 +25,21 @@ function RegisterPlayer(PlayerController PC)
 
 function float RewindFor(Pawn Shooter)
 {
+    return MeasuredDelayFor(Shooter,MaxRewindSeconds);
+}
+
+function float CoreCatchupFor(Pawn Shooter)
+{
+    return MeasuredDelayFor(Shooter,FClamp(MaxCoreCatchupSeconds,0.0,0.10));
+}
+
+function float MeasuredDelayFor(Pawn Shooter, float Limit)
+{
     local int i;
     if (Shooter == None || Shooter.IsLocallyControlled() || PlayerController(Shooter.Controller) == None) return 0;
     for (i=0;i<Pings.Length;i++)
         if (Pings[i] != None && Pings[i].Owner == Shooter.Controller)
-            return Pings[i].GetRewind(MaxRewindSeconds);
+            return Pings[i].GetRewind(Limit);
     return 0;
 }
 
@@ -170,6 +181,7 @@ function bool TraceAt(UTWeapon W, vector Start, vector End, float TargetTime,
 defaultproperties
 {
     MaxRewindSeconds=0.15
+    MaxCoreCatchupSeconds=0.06
     RemoteRole=ROLE_None
     bAlwaysTick=true
     TickGroup=TG_PostAsyncWork

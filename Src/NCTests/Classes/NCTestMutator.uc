@@ -6,6 +6,7 @@ var NCTestShock Port[2], Rapid[2], Tap[2];
 var NCTestStockShock Stock[2];
 var array<UTPawn> Pawns;
 var int Checks;
+var NCShockBall AgedCore;
 
 function Check(bool Passed, string Label)
 {
@@ -183,6 +184,142 @@ function TestCores()
     Core.Destroy(); Victim.Destroy(); W.Instigator.Destroy(); C.Destroy(); N.Destroy();
 }
 
+function NCShockBall MakeCore(vector Position)
+{
+    local NCShockBall Core;
+    Core=Spawn(class'NCShockBall',,,Position);
+    if (Core != None) Core.Init(vect(1,0,0));
+    return Core;
+}
+
+function TestCatchup()
+{
+    local NCShockBall Core, OtherCore;
+    local NCTestWorldWall Wall;
+    local NCTestPawn Victim;
+    local vector Origin, Saved;
+    local float Before, Advanced;
+    Origin=vect(0,14000,10000);
+    Core=MakeCore(Origin);
+    Check(Core != None,"native catch-up setup");
+    if (Core == None) return;
+    Before=Core.LifeSpan;
+    Advanced=Core.AdvanceAtSpawn(0.06);
+    Check(Abs(Advanced-0.06) < 0.0001 && VSize(Core.Location-Origin-vect(69,0,0)) < 0.1
+        && VSize(Core.Velocity-vect(1150,0,0)) < 0.1,"native catch-up advances 60ms at stock speed");
+    Check(Abs(Core.LifeSpan-(Before-0.06)) < 0.001,"catch-up consumes flight lifetime");
+    Saved=Core.Location;
+    Check(Core.AdvanceAtSpawn(0.1) == 0 && Core.Location == Saved,"catch-up cannot be applied twice");
+    Core.Destroy();
+    Core=MakeCore(Origin);
+    Advanced=Core.AdvanceAtSpawn(10.0);
+    Check(Abs(Advanced-0.1) < 0.0001 && VSize(Core.Location-Origin-vect(115,0,0)) < 0.1,"catch-up hard cap is 100ms");
+    Core.Destroy();
+    Core=MakeCore(Origin);
+    Check(Core.AdvanceAtSpawn(0) == 0 && Core.Location == Origin,"disabled catch-up leaves stock spawn intact");
+    Core.Destroy();
+    Core=MakeCore(Origin); Core.CustomTimeDilation=0.5;
+    Check(Core.AdvanceAtSpawn(0.06) == 0 && Core.Location == Origin,"custom time dilation uses stock fallback");
+    Core.Destroy();
+    Core=MakeCore(Origin); Core.LifeSpan=0.02;
+    Advanced=Core.AdvanceAtSpawn(0.1);
+    Check(Advanced <= 0.0101 && Core.LifeSpan > 0 && Core.LifeSpan <= 0.011,"short remaining life cannot become immortal");
+    Core.Destroy();
+    Wall=Spawn(class'NCTestWorldWall',,,Origin+vect(40,0,0));
+    Core=MakeCore(Origin);
+    Core.AdvanceAtSpawn(0.06);
+    Check(Wall != None && Core.bShuttingDown && Core.Location.X < Wall.Location.X,"native catch-up stops at thin world geometry");
+    Core.Destroy(); Wall.Destroy();
+    Victim=NCTestPawn(MakePawn(Origin+vect(80,0,0),true));
+    Core=MakeCore(Origin);
+    Core.AdvanceAtSpawn(0.06);
+    Check(Core.bShuttingDown && Victim.DamageEvents == 1 && Victim.LastDamage == int(Core.Damage),"native catch-up dispatches one stock direct hit");
+    Before=Victim.DamageEvents;
+    Core.AdvanceAtSpawn(0.06);
+    Check(Victim.DamageEvents == int(Before),"resolved catch-up cannot damage twice");
+    Core.Destroy(); Victim.Destroy();
+    OtherCore=MakeCore(Origin+vect(55,0,0)); OtherCore.SetPhysics(PHYS_None);
+    Core=MakeCore(Origin);
+    Core.AdvanceAtSpawn(0.06);
+    Check(Core.bShuttingDown && OtherCore.bShuttingDown,"native catch-up retains core/core destruction");
+    Core.Destroy(); OtherCore.Destroy();
+    AgedCore=MakeCore(Origin);
+    SetTimer(0.2,false,'TestLateCatchup');
+}
+
+function TestLateCatchup()
+{
+    local vector Before;
+    Before=AgedCore.Location;
+    Check(WorldInfo.TimeSeconds-AgedCore.CreationTime > 0.05 && AgedCore.AdvanceAtSpawn(0.06) == 0
+        && AgedCore.Location == Before,"old cores cannot receive a late catch-up");
+    AgedCore.Destroy();
+}
+
+function TestCatchupMeasurement()
+{
+    local NCRewind N;
+    local NCPing Ping;
+    local NCTestController C;
+    local UTPawn P;
+    N=Spawn(class'NCRewind');
+    C=Spawn(class'NCTestController');
+    P=MakePawn(vect(0,18500,10000)); C.Pawn=P; P.Controller=C;
+    N.RegisterPlayer(C);
+    Check(N.Pings.Length == 1 && N.CoreCatchupFor(P) == 0,"unmeasured connection receives no core catch-up");
+    if (N.Pings.Length == 1)
+    {
+        Ping=N.Pings[0]; Ping.SampleCount=3; Ping.MinimumRTT=0.18; Ping.LastReply=WorldInfo.TimeSeconds;
+        N.MaxRewindSeconds=0;
+        Check(N.RewindFor(P) == 0 && Abs(N.CoreCatchupFor(P)-0.06) < 0.0001,"core catch-up limit is independent of beam rewind");
+        N.MaxCoreCatchupSeconds=0;
+        Check(N.CoreCatchupFor(P) == 0,"zero configuration disables core catch-up");
+        N.MaxCoreCatchupSeconds=10; Ping.MinimumRTT=0.5;
+        Check(Abs(N.CoreCatchupFor(P)-0.1) < 0.0001,"connection catch-up respects absolute limit");
+        Ping.LastReply=WorldInfo.TimeSeconds-6;
+        Check(N.CoreCatchupFor(P) == 0,"stale measurement receives no core catch-up");
+        Ping.Destroy();
+    }
+    P.Destroy(); C.Destroy(); N.Destroy();
+}
+
+function TestEarlyImpactMatching()
+{
+    local NCTestShock W;
+    local NCTestController C;
+    local NCTestRewind N;
+    local NCTestWorldWall Wall;
+    local NCShockBall Core;
+    local NCPredictedCore Visual;
+    local NCShockRifle.VisualRequest Request;
+    W=NCTestShock(MakeWeapon(vect(0,17000,10000),false));
+    C=Spawn(class'NCTestController'); C.Pawn=W.Instigator; W.Instigator.Controller=C;
+    N=Spawn(class'NCTestRewind'); W.Rewind=N;
+    Wall=Spawn(class'NCTestWorldWall',,,W.GetPhysicalFireStartLoc()+vect(40,0,0));
+    W.CurrentFireMode=1; W.FireAmmunition(); Core=NCShockBall(W.LastProjectile);
+    Check(Core != None && Core.bShuttingDown && W.CaughtUpCoreCount == 1
+        && W.UnmatchedCores.Length == 1,"stock-authorized shot keeps a slot after catch-up impact");
+    Wall.Destroy();
+    W.FireAmmunition(); Core=NCShockBall(W.LastProjectile);
+    Visual=Spawn(class'NCPredictedCore',W,,vect(0,17500,10000));
+    Visual.VisualId=101; W.Visuals.AddItem(Visual);
+    W.ServerVisual(101);
+    Check(W.UnmatchedCores.Length == 1 && Core.VisualId == 0 && W.RetiredVisualCount == 1
+        && Visual.bDeleteMe,"early impact retires its visual without stealing next core");
+    Request.Id=102; Request.Time=WorldInfo.TimeSeconds; W.Requests.AddItem(Request);
+    W.ServiceMatches();
+    Check(Core.VisualId == 102 && W.UnmatchedCores.Length == 0 && W.Requests.Length == 0,
+        "next visual identity matches surviving core");
+    Check(W.AmmoCount == W.MaxAmmoCount-2 && W.ShotTimes.Length == 2,"catch-up and retirement add no shots or ammo cost");
+    Visual=Spawn(class'NCPredictedCore',W,,vect(0,17500,10000));
+    Visual.VisualId=102; W.Visuals.AddItem(Visual);
+    Core.Shutdown();
+    Check(Visual.bDeleteMe && W.RetiredVisualCount == 2,"impact after ID assignment retires a not-yet-mapped visual");
+    Core.Destroy();
+    Check(W.RetiredVisualCount == 2,"shutdown plus destruction retires the visual once");
+    W.Instigator.Destroy(); C.Destroy(); N.Destroy();
+}
+
 function Run()
 {
     local int Mode, i, ShockPickups, StockPickups, ShockAmmo;
@@ -200,6 +337,9 @@ function Run()
     Check(ShockAmmo > 0,"DM-Deck Shock ammo integration");
     TestHistoryAndImpacts();
     TestCores();
+    TestCatchup();
+    TestCatchupMeasurement();
+    TestEarlyImpactMatching();
     for (Mode=0;Mode<2;Mode++)
     {
         Position=vect(0,20000,10000); Position.Y+=Mode*10000;

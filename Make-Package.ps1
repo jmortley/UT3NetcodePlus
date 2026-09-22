@@ -5,8 +5,9 @@ if (-not (Test-Path -LiteralPath $binary)) { throw 'Build the package first.' }
 $engineLog=Join-Path $root 'Logs\engine-tests.log'
 if ((Get-Content -LiteralPath $engineLog -Raw) -notmatch '\[NCTests\] PASS') { throw 'Run the engine checks first.' }
 $networkRun=Get-ChildItem -LiteralPath (Join-Path $root 'Logs\network-lag80-loss5') -Directory | Sort-Object Name -Descending | Select-Object -First 1
+$localRun=Get-ChildItem -LiteralPath (Join-Path $root 'Logs\network-lag0-loss0') -Directory | Sort-Object Name -Descending | Select-Object -First 1
 $baselineRun=Get-ChildItem -LiteralPath (Join-Path $root 'Logs\network-stock-baseline') -Directory | Sort-Object Name -Descending | Select-Object -First 1
-foreach ($run in @($networkRun,$baselineRun)) {
+foreach ($run in @($networkRun,$localRun,$baselineRun)) {
     if ($null -eq $run -or (Get-Content -LiteralPath (Join-Path $run.FullName 'server.log') -Raw) -notmatch '\[NCNet\] PASS') { throw 'Complete the network and stock baseline checks first.' }
 }
 $stage=Join-Path $root ('Dist\Staging\' + (Get-Date).ToString('yyyyMMdd-HHmmss-fff'))
@@ -19,12 +20,13 @@ foreach ($name in @('Build.ps1','Test.ps1','Test-Network.ps1','Play.ps1','Make-P
     Copy-Item -LiteralPath (Join-Path $root $name) -Destination $stage
 }
 $evidence=Join-Path $stage 'Evidence'
-New-Item -ItemType Directory -Path (Join-Path $evidence 'stock-baseline'),(Join-Path $evidence 'lag80-loss5') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $evidence 'stock-baseline'),(Join-Path $evidence 'lag80-loss5'),(Join-Path $evidence 'lag0-loss0') -Force | Out-Null
 Copy-Item -LiteralPath $engineLog -Destination $evidence
 Copy-Item -LiteralPath (Join-Path $root 'Logs\compile.log.console.txt') -Destination $evidence
 foreach ($name in @('server.log','client1.log','client2.log')) {
     Copy-Item -LiteralPath (Join-Path $baselineRun.FullName $name) -Destination (Join-Path $evidence 'stock-baseline')
     Copy-Item -LiteralPath (Join-Path $networkRun.FullName $name) -Destination (Join-Path $evidence 'lag80-loss5')
+    Copy-Item -LiteralPath (Join-Path $localRun.FullName $name) -Destination (Join-Path $evidence 'lag0-loss0')
 }
 $hashes=@()
 foreach ($source in (Get-ChildItem -LiteralPath (Join-Path $root 'Src') -File -Recurse | Sort-Object FullName)) {

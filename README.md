@@ -8,12 +8,16 @@ An independently compiled UT3 UnrealScript package covering **Shock primary beam
 - Fixed 128-sample history per tracked pawn, with death, possession, vehicle, crouch and stock teleport-generation boundaries. Trace calculations never relocate live pawns.
 - Current world obstruction and ordered shootable-trigger impacts. Portals, vehicles and non-UTPawn collisions fall back to stock tracing.
 - Immediate owner-only core visuals on remote clients. A small visual-ID message matches a predicted visual to a core that stock firing already spawned on the server. The identity travels on the replicated core, avoiding an RPC/actor-arrival race. Handoff blends over 120 ms; unmatched visuals expire after 750 ms.
-- Stock authoritative core movement, collision, splash damage, core/core destruction and Shock combos. Primary and secondary firing RPCs, state transitions, refire intervals and ammo consumption remain inherited.
+- One-time server core catch-up after a stock-authorized spawn: up to **60 ms by default**, capped at 100 ms. The duration comes from measured half RTT and uses UT3's native projectile physics in bounded steps. Walls, pawn contact and core/core collisions stop flight normally; remaining flight lifetime is reduced by the advance. It adds no shots and does not change flight speed.
+- Early impacts and failed spawns keep their shot slot within the existing 250 ms matching window. Their visual ID retires the corresponding prediction instead of being paired to the next surviving core. Shutdown/destruction also retires an already-assigned visual, covering a core that dies before its first actor update reaches the client.
+- Stock authoritative collision, splash damage, core/core destruction and Shock combos. Primary and secondary firing RPCs, state transitions, refire intervals and ammo consumption remain inherited.
 - Normal Shock weapon pickups, lockers, ammo and default-loadout replacement. Other weapons and match rules remain stock.
 
 ## Current boundaries
 
-Core prediction is **visual prediction with authoritative matching**. Server core flight/collisions are not rewound or fast-forwarded. There are no client projectile-hit claims or historical combo-core traces. Combo detection uses the real server core; a predicted visual cannot cause damage or authorize a combo. In difficult latency conditions this conservative version can visibly correct a core's position or disagree with the apparent timing of an off-axis combo. Those are further projectile-compensation tasks, not solved by this alpha.
+Core compensation combines **visual prediction with authoritative matching and bounded server spawn catch-up**. Catch-up checks the current world and current actors; it does not rewind pawn positions for projectile hits. There are no client projectile-hit claims or historical combo-core traces. Combo detection uses the real server core; a predicted visual cannot cause damage or authorize a combo. A core can still visibly correct during handoff or disagree with the apparent timing of an off-axis combo. Catch-up alone does not solve those cases.
+
+Core catch-up requires a fresh server ping estimate and a newly spawned remote player's core. Local players, bots, stale/unmeasured connections and projectiles with custom time dilation keep stock spawn timing. The core cannot receive a second or delayed catch-up. The default 60 ms window follows the current UT4 plugin's 120 ms RTT prediction cap, implemented through UT3's native physics API.
 
 Stock teleporters and the translocator update `UTPawn.BigTeleportCount`. A custom teleport implementation that only calls `SetLocation` must call `NCRewind.ResetPawnHistory(Pawn)` or maintain that generation itself. The distance heuristic remains only a fallback. Moving doors and other world geometry are tested at their current positions. This Shock slice has no sniper/headshot implementation, console aim-assist validation, or other weapon adapters.
 
@@ -53,4 +57,4 @@ The generated ZIP includes an `UTGame` directory. Merge that directory into your
 
 Enable **NetcodePlus UT3 - Shock Alpha** as a mutator, or append `?mutator=NetcodePlusUT3.NCMutator` to a server map URL. Use this by itself while testing; stacking another Shock weapon-replacement mutator, including UTComp3's wrappers, has not been validated. Both client and server need the same build. To uninstall, remove these two package-specific files.
 
-Settings are under `[NetcodePlusUT3.NCMutator]`: `MaxRewindSeconds` and `bPredictCores`. The ZIP contains complete mod source and build scripts. It does not contain UT3 engine binaries or assets.
+Settings are under `[NetcodePlusUT3.NCMutator]`: `MaxRewindSeconds`, `MaxCoreCatchupSeconds` and `bPredictCores`. Set `MaxCoreCatchupSeconds=0` to disable the server advance; this is independent of beam rewind and client visual prediction. The ZIP contains complete mod source and build scripts. It does not contain UT3 engine binaries or assets.
