@@ -3,6 +3,9 @@ class NCShockBall extends UTProj_ShockBall;
 
 var NCShockRifle PredictionWeapon;
 var int VisualId;
+var int PredictionGeneration;
+var Pawn PredictionOwner;
+var Controller PredictionController;
 var bool bMatchResolved;
 var bool bCatchupResolved;
 var bool bVisualRetired;
@@ -11,7 +14,7 @@ var float CatchupSeconds;
 
 replication
 {
-    if (Role == ROLE_Authority) PredictionWeapon, VisualId;
+    if (Role == ROLE_Authority) PredictionWeapon, VisualId, PredictionGeneration, PredictionOwner, PredictionController;
 }
 
 // Called only after stock ProjectileFire has authorized, spawned and aimed a core.
@@ -44,19 +47,28 @@ function float AdvanceAtSpawn(float Seconds)
 
 function SetVisualIdentity(NCShockRifle W, int Id)
 {
-    if (Role != ROLE_Authority || VisualId != 0) return;
+    if (Role != ROLE_Authority || VisualId != 0 || W == None || W.bDeleteMe || Id <= 0
+        || W.PredictionGeneration <= 0 || W.MatchOwner == None || W.MatchController == None
+        || W.MatchOwner != W.Instigator || W.MatchController != W.Instigator.Controller
+        || Instigator != W.MatchOwner) return;
     PredictionWeapon=W;
     VisualId=Id;
+    PredictionGeneration=W.PredictionGeneration;
+    PredictionOwner=W.MatchOwner;
+    PredictionController=W.MatchController;
     bNetDirty=true;
     bForceNetUpdate=true;
 }
 
 function RetireOwnerVisual()
 {
-    if (!bVisualRetired && PredictionWeapon != None && !PredictionWeapon.bDeleteMe && VisualId > 0)
+    if (!bVisualRetired && PredictionWeapon != None && !PredictionWeapon.bDeleteMe && VisualId > 0
+        && PredictionGeneration > 0 && PredictionOwner != None && PredictionController != None
+        && PredictionWeapon.PredictionGeneration == PredictionGeneration
+        && PredictionWeapon.Instigator == PredictionOwner && PredictionOwner.Controller == PredictionController)
     {
         bVisualRetired=true;
-        PredictionWeapon.ClientRetireVisual(VisualId);
+        PredictionWeapon.ClientRetireVisual(VisualId,PredictionGeneration,PredictionOwner,PredictionController);
     }
 }
 
@@ -77,11 +89,13 @@ simulated event Destroyed()
 simulated event Tick(float DeltaTime)
 {
     // The actor, weapon reference and identity may arrive in different updates.
-    // Wait for all three instead of passing an unmapped actor in a weapon RPC.
-    if (Role < ROLE_Authority && !bMatchResolved && VisualId > 0
-        && PredictionWeapon != None && Instigator != None && Instigator.IsLocallyControlled())
+    // Wait for the complete identity instead of passing an unmapped actor in a weapon RPC.
+    if (Role < ROLE_Authority && !bMatchResolved && VisualId > 0 && PredictionGeneration > 0
+        && PredictionWeapon != None && PredictionOwner != None && PredictionController != None
+        && Instigator == PredictionOwner && PredictionOwner.Controller == PredictionController
+        && PredictionOwner.IsLocallyControlled())
     {
-        PredictionWeapon.MatchVisual(VisualId,self);
+        PredictionWeapon.MatchVisual(VisualId,PredictionGeneration,PredictionOwner,PredictionController,self);
         bMatchResolved=true;
     }
 }

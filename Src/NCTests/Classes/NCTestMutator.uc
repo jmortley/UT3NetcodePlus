@@ -117,6 +117,74 @@ function TestHistoryAndImpacts()
     Before.Destroy(); Behind.Destroy(); P.Destroy(); W.Instigator.Destroy(); N.Destroy();
 }
 
+function TestCollisionEligibility()
+{
+    local UTPawn P;
+    local NCPawnHistory H, Recovered;
+    local NCTestRewind N;
+    local NCTestShock W;
+    local Actor NativeHit;
+    local vector Position, Start, End, HitLocation, HitNormal;
+    local float Radius, Height, Now;
+    local Weapon.ImpactInfo Impact;
+    local array<Weapon.ImpactInfo> Impacts;
+    local bool Active;
+    P=MakePawn(vect(600,5000,10000),true);
+    W=NCTestShock(MakeWeapon(vect(-500,5000,10000),false));
+    N=Spawn(class'NCTestRewind');
+    Check(P != None && P.CylinderComponent != None && P.Mesh != None && W != None && N != None,
+        "collision eligibility setup");
+    if (P == None || P.CylinderComponent == None || P.Mesh == None || W == None || N == None) return;
+    Now=WorldInfo.TimeSeconds;
+    H=new class'NCPawnHistory'; H.Tracked=P;
+    H.Record(Now-0.08);
+    P.SetLocation(vect(600,5040,10000)); H.Record(Now-0.04);
+    P.SetLocation(vect(600,5080,10000)); H.Record(Now);
+    N.Histories.AddItem(H);
+    Check(H.AtTime(Now-0.06,Position,Radius,Height),"standing cylinder has usable history");
+
+    // Exercise the transition before the recorder ticks. Keep a deterministic
+    // native cylinder here: these checks audit eligibility and native fallback,
+    // not the renderer or the physical pose of a character's ragdoll asset.
+    P.bFeigningDeath=true;
+    Check(!H.AtTime(Now-0.06,Position,Radius,Height),"feign entry immediately rejects standing history");
+    Start=vect(100,5020,10000); End=vect(1200,5020,10000);
+    NativeHit=W.GetTraceOwner().Trace(HitLocation,HitNormal,End,Start,true,,,TRACEFLAG_Bullet);
+    Active=N.TraceAt(W,Start,End,Now-0.06,Impact,Impacts);
+    Check(NativeHit == None && Active && Impact.HitActor == None,
+        "excluded pose cannot be hit through its old standing cylinder");
+    Start.Y=5080; End.Y=5080; Impacts.Length=0;
+    NativeHit=W.GetTraceOwner().Trace(HitLocation,HitNormal,End,Start,true,,,TRACEFLAG_Bullet);
+    Active=N.TraceAt(W,Start,End,Now-0.06,Impact,Impacts);
+    Check(NativeHit == P && Active && Impact.HitActor == NativeHit && CountActor(Impacts,P) == 1,
+        "excluded pose preserves current native collision exactly once");
+
+    P.bFeigningDeath=false; P.bPlayingFeignDeathRecovery=true;
+    Check(!H.AtTime(Now-0.06,Position,Radius,Height),"feign recovery rejects standing history");
+    P.bPlayingFeignDeathRecovery=false; P.CollisionComponent=P.Mesh;
+    Check(!H.AtTime(Now-0.06,Position,Radius,Height),"non-cylinder collision component rejects cylinder history");
+    P.CollisionComponent=P.CylinderComponent;
+    P.CylinderComponent.SetActorCollision(false,false);
+    Check(!H.AtTime(Now-0.06,Position,Radius,Height),"disabled cylinder collision rejects history");
+    P.CylinderComponent.SetActorCollision(true,false);
+    Check(!H.AtTime(Now-0.06,Position,Radius,Height),"nonblocking actor cylinder rejects history");
+    P.CylinderComponent.SetActorCollision(true,true);
+    P.CylinderComponent.SetTraceBlocking(false,true);
+    Check(!H.AtTime(Now-0.06,Position,Radius,Height),"nonblocking bullet cylinder rejects history");
+    P.CylinderComponent.SetTraceBlocking(true,true);
+
+    P.bFeigningDeath=true; N.RecordPawns();
+    Check(N.FindHistory(P) == None,"recorder drops unsupported pose without creating another history");
+    P.bFeigningDeath=false; P.bPlayingFeignDeathRecovery=true; N.RecordPawns();
+    Check(N.FindHistory(P) == None,"recorder keeps recovery outside cylinder rewind");
+    P.bPlayingFeignDeathRecovery=false; N.RecordPawns();
+    Recovered=N.FindHistory(P);
+    Check(Recovered != None && Recovered != H && Recovered.Count == 1
+        && !Recovered.AtTime(Now-0.06,Position,Radius,Height)
+        && Recovered.AtTime(Now,Position,Radius,Height),"recovered cylinder starts fresh without bridging the pose change");
+    P.Destroy(); W.Instigator.Destroy(); N.Destroy();
+}
+
 function TestCores()
 {
     local NCTestShock W;
@@ -134,7 +202,7 @@ function TestCores()
     Check(W != None && C != None,"core setup");
     if (W == None || C == None) return;
     C.Pawn=W.Instigator; W.Instigator.Controller=C;
-    W.ServerVisual(1);
+    W.SubmitVisual(1);
     Check(W.AmmoCount == W.MaxAmmoCount && W.LastProjectile == None,"visual metadata cannot fire or spend ammo");
     W.CurrentFireMode=1;
     W.FireAmmunition();
@@ -170,6 +238,9 @@ function TestCores()
         Check(Core.bShuttingDown && OtherCore.bShuttingDown,"core versus core destroys both");
     }
     Visual=Spawn(class'NCPredictedCore',W,,Origin);
+    Visual.PredictionGeneration=W.PredictionGeneration;
+    Visual.PredictionOwner=W.Instigator;
+    Visual.PredictionController=W.Instigator.Controller;
     DamageBefore=Victim.DamageEvents; AmmoBefore=W.AmmoCount;
     Visual.ProcessTouch(Victim,Victim.Location,vect(-1,0,0));
     Visual.TakeDamage(10,C,Visual.Location,vect(0,0,0),class'UTDmgType_ShockPrimary');
@@ -179,7 +250,7 @@ function TestCores()
     SavedPosition=Core.Location;
     Visual.MatchTo(Core); Visual.Tick(0.2);
     Check(Visual.bDeleteMe && !Core.bHidden && Core.Location == SavedPosition,"visual handoff leaves authoritative position intact and unhides core");
-    W.ServerVisual(1);
+    W.SubmitVisual(1);
     Check(W.Requests.Length == 0,"duplicate visual id is ignored");
     Core.Destroy(); Victim.Destroy(); W.Instigator.Destroy(); C.Destroy(); N.Destroy();
 }
@@ -302,8 +373,11 @@ function TestEarlyImpactMatching()
     Wall.Destroy();
     W.FireAmmunition(); Core=NCShockBall(W.LastProjectile);
     Visual=Spawn(class'NCPredictedCore',W,,vect(0,17500,10000));
+    Visual.PredictionGeneration=W.PredictionGeneration;
+    Visual.PredictionOwner=W.Instigator;
+    Visual.PredictionController=W.Instigator.Controller;
     Visual.VisualId=101; W.Visuals.AddItem(Visual);
-    W.ServerVisual(101);
+    W.SubmitVisual(101);
     Check(W.UnmatchedCores.Length == 1 && Core.VisualId == 0 && W.RetiredVisualCount == 1
         && Visual.bDeleteMe,"early impact retires its visual without stealing next core");
     Request.Id=102; Request.Time=WorldInfo.TimeSeconds; W.Requests.AddItem(Request);
@@ -312,6 +386,9 @@ function TestEarlyImpactMatching()
         "next visual identity matches surviving core");
     Check(W.AmmoCount == W.MaxAmmoCount-2 && W.ShotTimes.Length == 2,"catch-up and retirement add no shots or ammo cost");
     Visual=Spawn(class'NCPredictedCore',W,,vect(0,17500,10000));
+    Visual.PredictionGeneration=W.PredictionGeneration;
+    Visual.PredictionOwner=W.Instigator;
+    Visual.PredictionController=W.Instigator.Controller;
     Visual.VisualId=102; W.Visuals.AddItem(Visual);
     Core.Shutdown();
     Check(Visual.bDeleteMe && W.RetiredVisualCount == 2,"impact after ID assignment retires a not-yet-mapped visual");
@@ -336,10 +413,12 @@ function Run()
     Check(ShockPickups > 0 && StockPickups == 0,"DM-Deck Shock pickup replacement");
     Check(ShockAmmo > 0,"DM-Deck Shock ammo integration");
     TestHistoryAndImpacts();
+    TestCollisionEligibility();
     TestCores();
     TestCatchup();
     TestCatchupMeasurement();
     TestEarlyImpactMatching();
+    Spawn(class'NCTestCoreOwnership').Run(self);
     for (Mode=0;Mode<2;Mode++)
     {
         Position=vect(0,20000,10000); Position.Y+=Mode*10000;

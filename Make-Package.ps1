@@ -23,6 +23,10 @@ $evidence=Join-Path $stage 'Evidence'
 New-Item -ItemType Directory -Path (Join-Path $evidence 'stock-baseline'),(Join-Path $evidence 'lag80-loss5'),(Join-Path $evidence 'lag0-loss0') -Force | Out-Null
 Copy-Item -LiteralPath $engineLog -Destination $evidence
 Copy-Item -LiteralPath (Join-Path $root 'Logs\compile.log.console.txt') -Destination $evidence
+$regressionLog=Join-Path $root 'Logs\regressions-before-lifecycle-fix\engine-tests.log'
+if (Test-Path -LiteralPath $regressionLog) {
+    Copy-Item -LiteralPath $regressionLog -Destination (Join-Path $evidence 'regressions-before-lifecycle-fix.log')
+}
 foreach ($name in @('server.log','client1.log','client2.log')) {
     Copy-Item -LiteralPath (Join-Path $baselineRun.FullName $name) -Destination (Join-Path $evidence 'stock-baseline')
     Copy-Item -LiteralPath (Join-Path $networkRun.FullName $name) -Destination (Join-Path $evidence 'lag80-loss5')

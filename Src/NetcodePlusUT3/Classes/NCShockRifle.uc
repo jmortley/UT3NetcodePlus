@@ -16,6 +16,8 @@ var array<NCPredictedCore> Visuals;
 var array<CoreRecord> UnmatchedCores;
 var array<VisualRequest> Requests;
 var int NextVisualId, LastVisualId;
+// Server-issued cosmetic identity; it does not participate in stock firing.
+var int PredictionGeneration;
 var Pawn MatchOwner;
 var Controller MatchController;
 var float LastRequestAt;
@@ -28,6 +30,7 @@ var float LastCoreCatchup;
 replication
 {
     if (bNetInitial && Role == ROLE_Authority) bPredictionEnabled;
+    if (Role == ROLE_Authority) PredictionGeneration;
 }
 
 simulated function ImpactInfo CalcWeaponFire(vector StartTrace, vector EndTrace, optional out array<ImpactInfo> ImpactList)
@@ -73,7 +76,8 @@ simulated function Projectile ProjectileFire()
             ServiceMatches();
         }
     }
-    else if (bPredictionEnabled && Instigator.IsLocallyControlled() && !WorldInfo.bWithinDemoPlayback)
+    else if (bPredictionEnabled && PredictionGeneration > 0 && Instigator.Controller != None
+        && Instigator.IsLocallyControlled() && !WorldInfo.bWithinDemoPlayback)
     {
         PruneVisuals();
         if (Visuals.Length >= 4) return P;
@@ -84,35 +88,68 @@ simulated function Projectile ProjectileFire()
             NextVisualId++;
             if (NextVisualId <= 0) NextVisualId=1;
             Visual.VisualId=NextVisualId;
+            Visual.PredictionGeneration=PredictionGeneration;
+            Visual.PredictionOwner=Instigator;
+            Visual.PredictionController=Instigator.Controller;
             Visual.Init(vector(GetAdjustedAim(Start)));
             Visuals.AddItem(Visual);
             PredictedVisualCount++;
-            ServerVisual(NextVisualId);
+            ServerVisual(NextVisualId,Visual.PredictionGeneration,Visual.PredictionOwner,Visual.PredictionController);
         }
     }
     return P;
 }
 
+function ResetPredictionIdentity(Pawn NewOwner)
+{
+    if (Role != ROLE_Authority) return;
+    PredictionGeneration++;
+    if (PredictionGeneration <= 0) PredictionGeneration=1;
+    MatchOwner=NewOwner;
+    MatchController=None;
+    if (NewOwner != None) MatchController=NewOwner.Controller;
+    UnmatchedCores.Length=0;
+    Requests.Length=0;
+    LastVisualId=0;
+    LastRequestAt=-1;
+    bNetDirty=true;
+    bForceNetUpdate=true;
+}
+
+function GivenTo(Pawn NewOwner, bool bDoNotActivate)
+{
+    // Initialize before stock GivenTo sends its owning-client notification.
+    ResetPredictionIdentity(NewOwner);
+    Super.GivenTo(NewOwner,bDoNotActivate);
+}
+
+function ItemRemovedFromInvManager()
+{
+    // A drop and reacquisition by the same pawn must still end the old session.
+    // DetachWeapon also runs on ordinary weapon switches and is not this boundary.
+    ResetPredictionIdentity(None);
+    Super.ItemRemovedFromInvManager();
+}
+
 function CheckMatchOwner()
 {
-    if (MatchOwner != Instigator || (Instigator != None && MatchController != Instigator.Controller))
+    if (Role == ROLE_Authority && (MatchOwner != Instigator
+        || (Instigator != None && MatchController != Instigator.Controller)
+        || (Instigator == None && MatchController != None)))
     {
-        MatchOwner=Instigator;
-        MatchController=None;
-        if (Instigator != None) MatchController=Instigator.Controller;
-        UnmatchedCores.Length=0;
-        Requests.Length=0;
-        LastVisualId=0;
-        LastRequestAt=-1;
+        ResetPredictionIdentity(Instigator);
     }
 }
 
 // Metadata only: this function cannot fire, spawn, move, damage or spend ammo.
-reliable server function ServerVisual(int Id)
+reliable server function ServerVisual(int Id, int Generation, Pawn VisualOwner, Controller VisualController)
 {
     local VisualRequest Request;
     CheckMatchOwner();
-    if (!bPredictionEnabled || Instigator == None || Instigator.Health <= 0 || Instigator.Weapon != self
+    if (!bPredictionEnabled || Generation <= 0 || Generation != PredictionGeneration
+        || VisualOwner == None || VisualController == None || VisualOwner != MatchOwner
+        || VisualController != MatchController || Instigator == None
+        || Instigator.Health <= 0 || Instigator.Weapon != self
         || Id <= LastVisualId || WorldInfo.TimeSeconds-LastRequestAt < 0.1) return;
     LastVisualId=Id;
     LastRequestAt=WorldInfo.TimeSeconds;
@@ -127,6 +164,8 @@ reliable server function ServerVisual(int Id)
 function ServiceMatches()
 {
     local int i;
+    // Also protect direct service calls after a possession/ownership change.
+    CheckMatchOwner();
     for (i=UnmatchedCores.Length-1;i>=0;i--)
         if (WorldInfo.TimeSeconds-UnmatchedCores[i].Time > 0.25)
             UnmatchedCores.Remove(i,1);
@@ -136,18 +175,21 @@ function ServiceMatches()
     {
         if (UnmatchedCores[0].Core != None && !UnmatchedCores[0].Core.bDeleteMe && !UnmatchedCores[0].Core.bShuttingDown)
             UnmatchedCores[0].Core.SetVisualIdentity(self,Requests[0].Id);
-        else ClientRetireVisual(Requests[0].Id);
+        else ClientRetireVisual(Requests[0].Id,PredictionGeneration,MatchOwner,MatchController);
         Requests.Remove(0,1);
         UnmatchedCores.Remove(0,1);
     }
     while (UnmatchedCores.Length > 4) UnmatchedCores.Remove(0,1);
 }
 
-reliable client function ClientRetireVisual(int Id)
+reliable client function ClientRetireVisual(int Id, int Generation, Pawn VisualOwner, Controller VisualController)
 {
     local int i;
+    if (Generation <= 0 || VisualOwner == None || VisualController == None) return;
     for (i=0;i<Visuals.Length;i++)
-        if (Visuals[i] != None && !Visuals[i].bDeleteMe && Visuals[i].VisualId == Id)
+        if (Visuals[i] != None && !Visuals[i].bDeleteMe && Visuals[i].VisualId == Id
+            && Visuals[i].PredictionGeneration == Generation && Visuals[i].PredictionOwner == VisualOwner
+            && Visuals[i].PredictionController == VisualController)
         {
             Visuals[i].Destroy();
             RetiredVisualCount++;
@@ -156,12 +198,21 @@ reliable client function ClientRetireVisual(int Id)
     PruneVisuals();
 }
 
-simulated function MatchVisual(int Id, NCShockBall Core)
+simulated function MatchVisual(int Id, int Generation, Pawn VisualOwner, Controller VisualController, NCShockBall Core)
 {
     local int i;
+    // Validate the actor metadata as well as the local visual. A weapon actor can
+    // be reused by another owner while an earlier core is still replicating.
+    if (Generation <= 0 || VisualOwner == None || VisualController == None
+        || Core == None || Core.bDeleteMe || Core.bShuttingDown
+        || Core.PredictionWeapon != self || Core.VisualId != Id
+        || Core.PredictionGeneration != Generation || Core.PredictionOwner != VisualOwner
+        || Core.PredictionController != VisualController || Core.Instigator != VisualOwner
+        || VisualOwner.Controller != VisualController) return;
     PruneVisuals();
     for (i=0;i<Visuals.Length;i++)
-        if (Visuals[i].VisualId == Id)
+        if (Visuals[i].VisualId == Id && Visuals[i].PredictionGeneration == Generation
+            && Visuals[i].PredictionOwner == VisualOwner && Visuals[i].PredictionController == VisualController)
         {
             if (Visuals[i].MatchedCore == Core) return;
             Visuals[i].MatchTo(Core);

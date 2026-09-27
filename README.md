@@ -6,10 +6,12 @@ An independently compiled UT3 UnrealScript package covering **Shock primary beam
 
 - Server-side primary body rewind, default maximum 150 ms and absolute configuration cap 250 ms. Rewind age comes from a server-timed challenge/reply, with startup and stale-measurement fallbacks.
 - Fixed 128-sample history per tracked pawn, with death, possession, vehicle, crouch and stock teleport-generation boundaries. Trace calculations never relocate live pawns.
+- Beam rewind only models the active, blocking pawn cylinder. Feign death, recovery, ragdolls and custom collision shapes use current native collision instead of an inaccurate historical standing cylinder; recording resumes with fresh history after an observed unsupported state.
 - Current world obstruction and ordered shootable-trigger impacts. Portals, vehicles and non-UTPawn collisions fall back to stock tracing.
 - Immediate owner-only core visuals on remote clients. A small visual-ID message matches a predicted visual to a core that stock firing already spawned on the server. The identity travels on the replicated core, avoiding an RPC/actor-arrival race. Handoff blends over 120 ms; unmatched visuals expire after 750 ms.
 - One-time server core catch-up after a stock-authorized spawn: up to **60 ms by default**, capped at 100 ms. The duration comes from measured half RTT and uses UT3's native projectile physics in bounded steps. Walls, pawn contact and core/core collisions stop flight normally; remaining flight lifetime is reduced by the advance. It adds no shots and does not change flight speed.
 - Early impacts and failed spawns keep their shot slot within the existing 250 ms matching window. Their visual ID retires the corresponding prediction instead of being paired to the next surviving core. Shutdown/destruction also retires an already-assigned visual, covering a core that dies before its first actor update reaches the client.
+- Cosmetic core identities include a server-issued ownership generation, pawn and controller. Old cores and delayed cleanup cannot consume a later owner's reused visual ID. Inventory removal/reacquisition and observed controller changes invalidate the old session; ordinary weapon switches keep the session and clean up local visuals.
 - Stock authoritative collision, splash damage, core/core destruction and Shock combos. Primary and secondary firing RPCs, state transitions, refire intervals and ammo consumption remain inherited.
 - Normal Shock weapon pickups, lockers, ammo and default-loadout replacement. Other weapons and match rules remain stock.
 
@@ -22,6 +24,8 @@ Core catch-up requires a fresh server ping estimate and a newly spawned remote p
 Stock teleporters and the translocator update `UTPawn.BigTeleportCount`. A custom teleport implementation that only calls `SetLocation` must call `NCRewind.ResetPawnHistory(Pawn)` or maintain that generation itself. The distance heuristic remains only a fallback. Moving doors and other world geometry are tested at their current positions. This Shock slice has no sniper/headshot implementation, console aim-assist validation, or other weapon adapters.
 
 Matching requests cannot create shots, change aim, move an authoritative core, spend ammo or apply damage. Matching queues and their age are bounded. Expired or unmatched metadata falls back to the replicated server core. Full UT4 fire-event sequencing and retry/authorization machinery have not been transplanted.
+
+Prediction can temporarily fall back to the server core while a new ownership identity replicates. Matching remains ordered within each ownership session. Both endpoints must use this build: the cosmetic metadata RPC signatures differ from the September 22 alpha.
 
 ## Build and test
 

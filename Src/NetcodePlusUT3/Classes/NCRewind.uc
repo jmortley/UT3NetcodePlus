@@ -67,7 +67,7 @@ function RecordPawns()
         if (!Histories[i].IsLive()) Histories.Remove(i,1);
     foreach WorldInfo.AllPawns(class'UTPawn',P)
     {
-        if (P.Health <= 0 || P.bTearOff || !P.bCollideActors || !P.bProjTarget || P.DrivenVehicle != None) continue;
+        if (!class'NCPawnHistory'.static.CanTrack(P)) continue;
         H=FindHistory(P);
         if (H == None && Histories.Length < 128)
         {

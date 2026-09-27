@@ -1,13 +1,13 @@
-# Shock alpha validation — September 22, 2026
+# Shock alpha validation — September 27, 2026
 
-Target executable: locally installed Steam UT3, build 3809. Final gameplay package: **91,038 bytes**, SHA-256 `E725AEFCAA18BCA577AFA816CB2FF23EB7815B4F471B905BE3D0DD8A19949545`.
+Target executable: locally installed Steam UT3, build 3809. Final gameplay package: **101,462 bytes**, SHA-256 `9CABEE499453B98A655679281C91129106EC86A47329BF3708A48BBED53A8570`.
 
 ## Results on the packaged build
 
 | Check | Result |
 |---|---|
 | UT3 UnrealScript compiler | Exit 0; `Success - 0 error(s), 0 warning(s)` |
-| Dedicated-server engine suite | **63/63 assertions pass**; no script warnings, accessed-none or error lines |
+| Dedicated-server engine suite | **93/93 assertions pass**; no script warnings, accessed-none or error lines |
 | Real two-client test, 80 ms outgoing packet lag and 5% loss configured on both ends | **Pass**; measured minimum RTT **183.3 ms**, applied rewind **91.7 ms** for both players |
 | Core catch-up in that run | Each player's first **3** cores received **60 ms** of native physics advance; the fourth core hit a wall before the full advance completed |
 | Core prediction and matching in that run | Each client created **4** visuals, matched **3** flying cores, retired **1** early-impact visual; **0** residual visuals |
@@ -19,6 +19,14 @@ Target executable: locally installed Steam UT3, build 3809. Final gameplay packa
 The native packet-simulation settings are applied again after each net driver exists. Command-line parsing alone initially printed the settings without establishing the intended final connection behavior. The final test asserts elevated measured RTT, rather than treating a settings log as proof of latency. Five percent is the configured random packet-loss probability, not an independently counted exact loss fraction. Game-time/tick quantization affects the reported RTT.
 
 The clients wait 4.5 seconds after enabling simulation so the eight-sample ping window can turn over. An earlier run used startup samples and correctly applied a conservative 55 ms advance, failing the test's 60 ms cap assertion; that was a test warm-up problem. The no-lag check then exposed a real visual-cleanup race when an assigned core died before its actor update arrived. Shutdown/destruction now retires that ID through the weapon channel, and both final network runs exercise the fix.
+
+## September 27 collision and ownership regressions
+
+Before changing gameplay code, the extended engine harness reproduced **11 failures**: ten checks exposed unsupported-pose history/native-collision errors, and one showed an old core deleting the next weapon owner's reused visual ID. All 63 existing checks still passed. The final suite adds 13 collision checks and 17 ownership checks, bringing the total to 93.
+
+Beam history now excludes feign death, recovery, rigid-body physics, non-cylinder collision and disabled/nonblocking cylinders. Tests reject standing history immediately on transition, preserve current native hit/miss results, remove unsupported histories, and start fresh after recovery. They use deterministic collision fixtures and flags, not a live animated skeletal ragdoll. A custom unsupported state that begins and ends entirely between observations still needs an explicit history reset.
+
+Core metadata now carries an immutable generation/pawn/controller identity. Engine tests use real inventory removal/acquisition on the same weapon actor, reused visual IDs, delayed retirement/matching calls, same-owner reacquisition and controller-only transfer. They also check current-identity matching/retirement, stale-request rejection, ordinary detach cleanup, authoritative core visibility, and no added shots/ammo cost. These calls model delayed delivery deterministically; the two-client runs validate normal metadata replication and early impacts, not live network ownership-transfer stress.
 
 ## What the engine suite exercises
 
@@ -40,17 +48,17 @@ The synthetic target records damage dispatch without ordinary spawn-protection s
 
 - Compiler: `Logs/compile.log.console.txt` (full engine log: `Logs/compile.log`).
 - Final engine checks: `Logs/engine-tests.log`.
-- Earlier stock baseline: `Logs/network-stock-baseline/20260921-222141-236/`.
-- Fresh stock connection baseline: `Logs/network-stock-baseline/20260922-000108-734/`.
-- Final real-client lag/loss run: `Logs/network-lag80-loss5/20260921-235929-162/`.
-- Final real-client no-simulation run: `Logs/network-lag0-loss0/20260921-235826-841/`.
+- Pre-fix regression reproduction: `Logs/regressions-before-lifecycle-fix/engine-tests.log`.
+- Fresh stock connection baseline: `Logs/network-stock-baseline/20260927-074406-249/`.
+- Final real-client lag/loss run: `Logs/network-lag80-loss5/20260927-074244-086/`.
+- Final real-client no-simulation run: `Logs/network-lag0-loss0/20260927-074327-443/`.
 - The ZIP includes the relevant logs in `Evidence/` and a binary/source hash manifest.
 
 ## Diagnostics and limits
 
-The earlier stock baseline reproduces the client-side `UTHUD.PostBeginPlay` accessed-none GRI warning and the online-service errors about voice ownership / starting an uncreated online game. It also reproduces a stock `UTPawn.PlayDying` physics-asset warning in one client. The final lag/loss run includes a `UTDeathMessage.ClientReceive` missing `RelatedPRI_2` warning during client startup, before the automated firing begins; its cause is not established by the gameplay assertions. Raw diagnostics remain in the evidence, and a pass is not a claim of entirely clean client logs. The final runs have no script warnings attributed to NetcodePlusUT3 or NCTests, no critical failure, and no unexpected native error. The full compiler log's stock NetIndex diagnostics were previously reproduced with zero mod packages during the audit.
+Stock baselines reproduce the client-side `UTHUD.PostBeginPlay` accessed-none GRI warning and the online-service errors about voice ownership / starting an uncreated online game. An earlier baseline also reproduced the stock `UTPawn.PlayDying` physics-asset warning seen in one client of each final gameplay run. Raw diagnostics remain in the evidence, and a pass is not a claim of entirely clean client logs. The final runs have no script warnings attributed to NetcodePlusUT3 or NCTests, no critical failure, and no unexpected native error. The full compiler log's stock NetIndex diagnostics were previously reproduced with zero mod packages during the audit.
 
-A fresh stock connection baseline reproduced the HUD/online diagnostics but did not reproduce the `UTDeathMessage` warning. That startup warning remains a documented investigation item rather than being classified as a proven baseline defect. The ZIP includes the fresh baseline logs.
+The September 22 lag/loss run contained a startup `UTDeathMessage.ClientReceive` missing `RelatedPRI_2` warning that was not reproduced by its fresh stock baseline. It did not recur in the September 27 final gameplay runs; its cause remains unestablished. The ZIP includes the current baseline logs.
 
 The real-client check uses controlled stationary players, straight core flight, an on-axis combo and a server-only near-muzzle wall fixture. It does not establish fairness against moving remote targets, visual smoothness during normal combat, off-axis high-ping combos, every map/door/portal/vehicle case, reconnect/death/switch stress, demo playback, console aim assist, hardware zero-debounce behavior, or long-session performance. Those remain playtesting/acceptance work for the alpha.
 

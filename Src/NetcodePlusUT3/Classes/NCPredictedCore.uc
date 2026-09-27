@@ -2,6 +2,9 @@
 class NCPredictedCore extends UTProj_ShockBall;
 
 var int VisualId;
+var int PredictionGeneration;
+var Pawn PredictionOwner;
+var Controller PredictionController;
 var NCShockBall MatchedCore;
 var float BlendRemaining;
 

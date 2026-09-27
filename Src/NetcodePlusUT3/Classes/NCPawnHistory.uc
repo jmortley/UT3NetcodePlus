@@ -21,11 +21,22 @@ function Clear()
     NextIndex=0;
 }
 
+// History models the normal upright cylinder only. Feign death and its recovery
+// use native skeletal collision, which must remain on the current-world trace.
+static function bool CanTrack(UTPawn P)
+{
+    return P != None && !P.bDeleteMe && P.Health > 0
+        && !P.bTearOff && P.bCollideActors && P.bProjTarget
+        && P.DrivenVehicle == None && !P.bFeigningDeath
+        && !P.bPlayingFeignDeathRecovery && P.Physics != PHYS_RigidBody
+        && P.CylinderComponent != None && P.CollisionComponent == P.CylinderComponent
+        && P.CylinderComponent.CollideActors && P.CylinderComponent.BlockActors
+        && P.CylinderComponent.BlockZeroExtent;
+}
+
 function bool IsLive()
 {
-    return Tracked != None && !Tracked.bDeleteMe && Tracked.Health > 0
-        && !Tracked.bTearOff && Tracked.bCollideActors && Tracked.bProjTarget
-        && Tracked.DrivenVehicle == None;
+    return CanTrack(Tracked);
 }
 
 function bool SameLifetime()
