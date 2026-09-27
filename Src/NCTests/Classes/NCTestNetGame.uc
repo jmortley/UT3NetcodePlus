@@ -16,7 +16,7 @@ defaultproperties
     bDelayedStart=false
     bWarmupRound=false
     bQuickStart=true
-    DefaultInventory(0)=class'NetcodePlusUT3.NCShockRifle'
+    DefaultInventory(0)=class'NCTestTraceShock'
     DefaultInventory(1)=None
     DefaultInventory(2)=None
     bUseSeamlessTravel=false

@@ -2,6 +2,7 @@ param(
     [string]$UT3Root = 'C:\Program Files (x86)\Steam\steamapps\common\Unreal Tournament 3',
     [switch]$SkipBuild,
     [switch]$StockBaseline,
+    [ValidateSet('Shock','Sniper','StockSniper','Rockets')][string]$Weapon='Shock',
     [ValidateRange(0,200)][int]$LagMs=0,
     [ValidateRange(0,20)][int]$LossPercent=0
 )
@@ -14,6 +15,7 @@ $binary=Join-Path $UT3Root 'Binaries\UT3.exe'
 $binaryDir=Join-Path $UT3Root 'Binaries'
 $config=Join-Path $PSScriptRoot 'BuildConfig\RuntimeEngine.ini'
 $runName="network-lag$LagMs-loss$LossPercent"
+if ($Weapon -ne 'Shock') { $runName="network-$($Weapon.ToLowerInvariant())-lag$LagMs-loss$LossPercent" }
 if ($StockBaseline) { $runName='network-stock-baseline' }
 $logs=Join-Path $PSScriptRoot ("Logs\$runName\" + (Get-Date).ToString('yyyyMMdd-HHmmss-fff'))
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
@@ -22,6 +24,11 @@ $common="-engineini=`"$config`" -nohomedir -noini -noautoiniupdate -unattended -
 try {
     $serverLog=Join-Path $logs 'server.log'
     $gameUrl='DM-Deck?game=NCTests.NCTestNetGame?mutator=NetcodePlusUT3.NCMutator,NCTests.NCTestNetMutator?bIsLanMatch=true?numplay=0'
+    if ($Weapon -ne 'Shock') {
+        $weaponMutators='NetcodePlusUT3.NCMutator,NCTests.NCTestWeaponNetMutator'
+        if ($Weapon -eq 'StockSniper') { $weaponMutators='NCTests.NCTestWeaponNetMutator' }
+        $gameUrl="DM-Deck?game=NCTests.NCTestWeaponNetGame?mutator=$weaponMutators`?bIsLanMatch=true?numplay=0?TestWeapon=$Weapon"
+    }
     $gameUrl+="?TestLag=$LagMs`?TestLoss=$LossPercent"
     if ($StockBaseline) { $gameUrl='DM-Deck?game=UTGame.UTDeathmatch?mutator=NCTests.NCTestBaseline?bIsLanMatch=true?numplay=0' }
     $server=Start-Process -FilePath $binary -WorkingDirectory $binaryDir -ArgumentList "server `"$gameUrl`" -multihome=127.0.0.1 -port=17999 $common -abslog=`"$serverLog`"" -WindowStyle Hidden -PassThru -RedirectStandardOutput "$serverLog.console.txt" -RedirectStandardError "$serverLog.stderr.txt"

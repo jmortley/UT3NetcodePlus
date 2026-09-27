@@ -33,6 +33,14 @@ replication
     if (Role == ROLE_Authority) PredictionGeneration;
 }
 
+simulated function PostBeginPlay()
+{
+    // Profile settings modify the stock defaults after child defaults exist.
+    // Copy before stock initialization so negative priorities keep its fallback.
+    Priority=class'UTWeap_ShockRifle'.default.Priority;
+    Super.PostBeginPlay();
+}
+
 simulated function ImpactInfo CalcWeaponFire(vector StartTrace, vector EndTrace, optional out array<ImpactInfo> ImpactList)
 {
     local ImpactInfo Impact;

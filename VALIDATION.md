@@ -1,67 +1,78 @@
-# Shock alpha validation — September 27, 2026
+# Weapon alpha validation — September 27, 2026
 
-Target executable: locally installed Steam UT3, build 3809. Final gameplay package: **101,462 bytes**, SHA-256 `9CABEE499453B98A655679281C91129106EC86A47329BF3708A48BBED53A8570`.
+Target executable: locally installed Steam UT3, build 3809. Final gameplay package: **158,574 bytes**, SHA-256 `DB038651D667723F566850993C3EDA60EB2EF74E90A088BF15DAD8303581C362`.
 
-## Results on the packaged build
+## Final build results
 
 | Check | Result |
 |---|---|
-| UT3 UnrealScript compiler | Exit 0; `Success - 0 error(s), 0 warning(s)` |
-| Dedicated-server engine suite | **93/93 assertions pass**; no script warnings, accessed-none or error lines |
-| Real two-client test, 80 ms outgoing packet lag and 5% loss configured on both ends | **Pass**; measured minimum RTT **183.3 ms**, applied rewind **91.7 ms** for both players |
-| Core catch-up in that run | Each player's first **3** cores received **60 ms** of native physics advance; the fourth core hit a wall before the full advance completed |
-| Core prediction and matching in that run | Each client created **4** visuals, matched **3** flying cores, retired **1** early-impact visual; **0** residual visuals |
-| Beam/core interaction in that run | Both players performed a server-confirmed combo; **42/50 ammo** remained: 4 cores + 1 beam + stock 3-ammo combo surcharge |
-| Released firing state in that run | Both server weapons in `Active`, with both pending-fire flags false |
-| Real two-client test without packet simulation | **Pass**; same combo, matching, retirement, ammo and released-state results; measured minimum RTT rounded to zero in game time and no catch-up was applied |
-| Stock network connection baseline | Two clients connected with ordinary UTDeathmatch and no NetcodePlus mutator or weapon replacement |
+| UnrealScript compiler | 0 errors, 0 warnings |
+| Dedicated-server engine suite | 213/213 assertions pass |
+| Sniper, 80 ms lag / 5% loss | Both clients: 3 rewind traces, 37/40 ammo, released and idle; real pawn head history available |
+| Sniper, no simulation | Both clients: 3 shots, 37/40 ammo, released and idle; no rewind applied |
+| Rockets, 80 ms lag / 5% loss | Both clients: 4 projectiles, 60 ms catch-up each, 26/30 ammo, released and idle |
+| Rockets, no simulation | Both clients: 4 projectiles, no catch-up, 26/30 ammo, released and idle |
+| Shock, 80 ms lag / 5% loss | Both clients: 4 visuals, 3 matches, 1 retirement, zero residual visuals, confirmed combo, 42/50 ammo, released and idle |
+| Shock, no simulation | Same matching/combo/ammo/release results, with no catch-up |
+| Stock connection baseline | Two clients connected with ordinary UTDeathmatch and no NetcodePlus mutator |
 
-The native packet-simulation settings are applied again after each net driver exists. Command-line parsing alone initially printed the settings without establishing the intended final connection behavior. The final test asserts elevated measured RTT, rather than treating a settings log as proof of latency. Five percent is the configured random packet-loss probability, not an independently counted exact loss fraction. Game-time/tick quantization affects the reported RTT.
+All three final lag/loss runs measured minimum RTT **183.3 ms** for both players; the effective hitscan delay is half RTT, **91.7 ms**, within its configured cap. In no-simulation runs, minimum RTT rounded to zero in game time. Shock's three open-flight cores each received 60 ms of advance under lag; its fourth core hit the nearby wall after 16.7 ms of submitted physics.
 
-The clients wait 4.5 seconds after enabling simulation so the eight-sample ping window can turn over. An earlier run used startup samples and correctly applied a conservative 55 ms advance, failing the test's 60 ms cap assertion; that was a test warm-up problem. The no-lag check then exposed a real visual-cleanup race when an assigned core died before its actor update arrived. Shutdown/destruction now retires that ID through the weapon channel, and both final network runs exercise the fix.
+These final runs passed. The earlier intermittent failures below remain open observations, not resolved by subsequent passes.
 
-## September 27 collision and ownership regressions
+## Engine verification
 
-Before changing gameplay code, the extended engine harness reproduced **11 failures**: ten checks exposed unsupported-pose history/native-collision errors, and one showed an old core deleting the next weapon owner's reused visual ID. All 63 existing checks still passed. The final suite adds 13 collision checks and 17 ownership checks, bringing the total to 93.
+The UT3 UnrealScript compiler reports **0 errors and 0 warnings**. The dedicated-server suite passes **213/213 assertions**, with no script warnings, accessed-none or error lines in the engine-test log.
 
-Beam history now excludes feign death, recovery, rigid-body physics, non-cylinder collision and disabled/nonblocking cylinders. Tests reject standing history immediately on transition, preserve current native hit/miss results, remove unsupported histories, and start fresh after recovery. They use deterministic collision fixtures and flags, not a live animated skeletal ragdoll. A custom unsupported state that begins and ends entirely between observations still needs an explicit history reset.
+Sniper checks capture the stock pawn's actual skeletal head center, then use deterministic historical samples to exercise body/head classification. Native dispatch produces 140-damage headshots, 70-damage body hits, stock damage types and helmet absorption. A shot cannot combine a historical body with a current-position head. Missing head samples and custom pawns keep native tracing; pass-through callbacks that teleport a victim or clear history reject stale historical damage. A farther unsupported pawn cannot suppress a nearer supported hit merely because its history was registered first. Zoom routing, held fire, rapid input edges, ammo and cadence are compared with stock controls.
 
-Core metadata now carries an immutable generation/pawn/controller identity. Engine tests use real inventory removal/acquisition on the same weapon actor, reused visual IDs, delayed retirement/matching calls, same-owner reacquisition and controller-only transfer. They also check current-identity matching/retirement, stale-request rejection, ordinary detach cleanup, authoritative core visibility, and no added shots/ammo cost. These calls model delayed delivery deterministically; the two-client runs validate normal metadata replication and early impacts, not live network ownership-transfer stress.
+Rocket checks exercise native flight distance, world collision, contact damage, life consumption, single-use catch-up, the 100 ms hard cap and stale/zero/scaled-time fallbacks. Grenades bounce through native physics and shorten their original random fuse without rerolling it. One-, two- and three-projectile loads are compared with stock for spread, spiral and grenades; lock-on retains the stock seeking class and target. Timed loading/release and primary input patterns retain stock shot counts, ammo and state transitions. Seeking and spiral modes deliberately receive no catch-up.
 
-## What the engine suite exercises
+Integration checks cover all three weapons' pickups and ammo, the exact stock default pawn replacement, and profile weapon priorities including UT3's negative-priority fallback. The mutator does not substitute a custom game mode's pawn class. Pickup HUD ammo flashes still use stock class-default comparisons; their presentation with replacement classes has not been fixed in this slice.
 
-- Actual DM-Deck Shock weapon and ammo pickup replacement.
-- Cylinder intersection and a miss; interpolated moving-body hits while the current body is off the ray.
-- A blocking actor taking precedence over a historical target; shootable triggers included exactly once before the blocker and excluded behind it.
-- A 100-unit teleport generation change invalidating history immediately and preventing interpolation across the jump; ring wrap and expired-sample rejection; immediate death invalidation.
-- A visual metadata request causing no shot and no ammo change; matching only after a stock-authorized core spawn.
-- Real server core spawning, contact damage, core/core destruction, beam-triggered combo damage and the stock combo ammo surcharge.
-- Cosmetic cores unable to damage, trigger combos, collide with pawns or replicate; handoff restoring the real core's visibility without changing its position.
-- Native core catch-up advances 69 units in 60 ms at stock speed, subtracts flight lifetime, respects the 100 ms absolute cap, and cannot run twice or on an old core. Zero settings, unmeasured/stale ping and custom time dilation preserve stock spawn timing.
-- Native catch-up stops at a thin world-geometry fixture, dispatches one full stock direct hit, and retains core/core destruction. Short remaining lifetimes cannot become unlimited. Core compensation can remain enabled when beam rewind is disabled.
-- A core ending before its visual ID arrives retains its slot and cannot consume the next surviving core's identity. An impact after ID assignment also retires the visual; shutdown plus destruction does not retire it twice. Neither path creates a shot or changes its ammo cost.
-- Primary and secondary held-fire shot counts, timestamps and ammo matching stock controls. Twenty release/press pairs per tick do not accelerate either mode. One hundred immediate start/stop pairs produce one shot in each mode.
+The earlier 93 Shock checks are retained. They cover cylinder interpolation and blocking geometry, pass-through impact order, death/teleport/collision eligibility, native core contact and combo damage, catch-up limits and lifetime, early visual retirement, ownership-generation isolation, and stock cadence/ammo under held and rapid input. The previous collision/ownership development reproduced 11 failures before its fixes; that historical log remains included. It is separate from this sniper/rocket implementation.
 
-The synthetic target records damage dispatch without ordinary spawn-protection suppression. The short-teleport test increments the same generation field used by stock `PostTeleport`/`DoTranslocate`; it is not a full live translocator match. Cadence is compared with the stock control's actual timestamps, not an assumption of mathematically exact timer spacing.
+Synthetic damage sinks avoid spawn-protection suppression. Collision fixtures model deterministic cylinder/pose transitions rather than animated ragdolls. The short-teleport test increments the stock teleport generation field; it is not a live translocator match. Cadence is compared with actual stock-control timestamps.
+
+## Real-client methodology
+
+Each network run starts a dedicated loopback server and two graphical clients. Mod runs use normal replicated player pawns and actual owning-client weapon calls. Native packet simulation is reapplied after each driver exists. Clients wait 4.5 seconds for the eight-sample ping window to turn over; mod lag tests assert an elevated measured RTT. The configured setting is 80 ms outgoing packet lag and 5% random packet-loss probability at both ends. Five percent is not an independently counted exact loss fraction.
+
+Sniper clients hold primary for 2.8 seconds and report 1.5 seconds after release. Assertions require three shots, 37/40 ammo, idle state and clear pending-fire flags on both ends. Lag runs also require three server rewind traces and a usable head-history sample from the actual network pawn. These shots intentionally miss; damage/headshot correctness is covered by the engine fixtures, not moving remote opponents.
+
+Rocket clients fire one primary shot, then hold alternate for 2.5 seconds to release three spread rockets. Assertions require four server spawns, 26/30 ammo, idle state and clear pending-fire flags. Lag runs require all four shots to receive 60 ms catch-up. Grenades, seeking and spiral modes are covered by the engine comparisons, not the real-client sequence.
+
+Shock clients create three flying cores, perform a server-confirmed combo, then fire a fourth core into a server-only near-muzzle blocker. Assertions preserve the original matching, retirement, cleanup, 42/50 ammo, release and catch-up requirements. The stock connection baseline uses ordinary UTDeathmatch. The additional StockSniper control uses exact stock UTPawn and UTWeap_SniperRifle without NCMutator, with the same timed input and release assertions.
+
+## Intermittent results retained for investigation
+
+The first sniper lag/loss run (`network-sniper-lag80-loss5/20260927-081150-282`) failed for one client: four server rewind traces, 36 ammo and client WeaponFiring at report, versus three expected shots. The run lacked release timestamps and pending flags, so its cause is **unestablished**. Subsequent test-only diagnostics log start/stop/report times, weapon identity, pending flags, refire interval/timer and inherited firing traces. The instrumented repeat cleared pending fire immediately on release and passed; the stock-sniper control passed too. Neither pass proves why the earlier run failed. Firing states and RPCs were not changed to make this test pass.
+
+The Shock lag/loss run (`network-lag80-loss5/20260927-081634-684`) failed the visual-match count: clients matched one and two open-flight cores instead of three. Both still had four predicted visuals, one retirement, zero residual visuals, correct ammo, confirmed combos and released firing. Server matching metadata expires after 250 ms and unmatched local visuals after 750 ms. Delayed delivery beyond those windows is plausible, but the original log cannot establish that cause. The strict assertions were retained. A test-only subclass now logs request tuples/times, queue ages, server-assigned identities and client visual availability while calling the same inherited implementation. Its final lag/loss and no-simulation runs passed; they did not reproduce the missing-match condition.
+
+Both failures and the first instrumented/stock comparison runs are copied into `Evidence/diagnostic-runs/` in the ZIP. Later passes do not erase these observations or establish reliability across packet-loss patterns.
+
+## Diagnostics and acceptance limits
+
+Stock baselines reproduce client-side UTHUD.PostBeginPlay missing-GRI and online-service voice/start-game diagnostics. A prior stock baseline also reproduced UTPawn.PlayDying's missing PhysicsAssetInstance warning, also seen in the final sniper no-simulation and rocket lag/loss runs. A UTDeathMessage.ClientReceive missing RelatedPRI_2 warning appeared in the instrumented sniper repeat and final sniper lag/loss run; its cause is unestablished and it was not reproduced by the stock-sniper control or final connection baseline. Raw logs remain in the evidence. A passed network run is not a claim of entirely clean client logs. NetcodePlusUT3/NCTests script warnings, critical failures and unexpected native errors fail the harness. The installed stock-package NetIndex compiler diagnostics were previously reproduced with zero mod packages during the audit.
+
+The tests do not establish fairness against moving remote targets, visual smoothness in normal combat, off-axis high-ping combos, animated head accuracy, scope UI appearance, every map/door/portal/vehicle case, live ownership/reconnect/death/switch stress, demo playback, console aim assist, physical zero-debounce behavior or long-session/large-player-count performance. Head sampling forces skeletal updates and needs performance measurement in a real match.
+
+Rockets have bounded authoritative spawn catch-up, not client rocket visual prediction. Seeking and spiral flight remain stock. Projectile catch-up uses current collision; there are no historical projectile-hit claims or historical combo-core traces. Shock prediction remains cosmetic. No UT4 fire-event authorization/retry protocol was introduced.
+
+The successful graphical tests require approved desktop Direct3D access; headless/sandbox rendering attempts previously failed. Test scripts own and stop their processes, use isolated configuration/search paths, and do not modify the installed UT3 engine configuration or UT4 tracked plugin source.
 
 ## Evidence
 
-- Compiler: `Logs/compile.log.console.txt` (full engine log: `Logs/compile.log`).
-- Final engine checks: `Logs/engine-tests.log`.
-- Pre-fix regression reproduction: `Logs/regressions-before-lifecycle-fix/engine-tests.log`.
-- Fresh stock connection baseline: `Logs/network-stock-baseline/20260927-074406-249/`.
-- Final real-client lag/loss run: `Logs/network-lag80-loss5/20260927-074244-086/`.
-- Final real-client no-simulation run: `Logs/network-lag0-loss0/20260927-074327-443/`.
-- The ZIP includes the relevant logs in `Evidence/` and a binary/source hash manifest.
-
-## Diagnostics and limits
-
-Stock baselines reproduce the client-side `UTHUD.PostBeginPlay` accessed-none GRI warning and the online-service errors about voice ownership / starting an uncreated online game. An earlier baseline also reproduced the stock `UTPawn.PlayDying` physics-asset warning seen in one client of each final gameplay run. Raw diagnostics remain in the evidence, and a pass is not a claim of entirely clean client logs. The final runs have no script warnings attributed to NetcodePlusUT3 or NCTests, no critical failure, and no unexpected native error. The full compiler log's stock NetIndex diagnostics were previously reproduced with zero mod packages during the audit.
-
-The September 22 lag/loss run contained a startup `UTDeathMessage.ClientReceive` missing `RelatedPRI_2` warning that was not reproduced by its fresh stock baseline. It did not recur in the September 27 final gameplay runs; its cause remains unestablished. The ZIP includes the current baseline logs.
-
-The real-client check uses controlled stationary players, straight core flight, an on-axis combo and a server-only near-muzzle wall fixture. It does not establish fairness against moving remote targets, visual smoothness during normal combat, off-axis high-ping combos, every map/door/portal/vehicle case, reconnect/death/switch stress, demo playback, console aim assist, hardware zero-debounce behavior, or long-session performance. Those remain playtesting/acceptance work for the alpha.
-
-Server projectile-hit rewind, historical combo-core traces and client projectile-hit claims remain absent. This build adds bounded catch-up at server spawn using current collision state, followed by normal projectile simulation. Client prediction remains cosmetic with authoritative matching. No new fire-event authorization protocol was introduced.
-
-The headless client attempt crashed in native rendering initialization. Sandboxed graphical clients reported `D3DERR_NOTAVAILABLE`; the successful real-client checks used approved desktop Direct3D access. All test processes were owned by the scripts and stopped after each run. The installed UT3 engine configuration and UT4 tracked plugin source were not edited, and no installed `UTNetcodePlusUT3.ini` was created by the tests.
+- Compiler: `Logs/compile.log.console.txt`; complete engine log: `Logs/compile.log`.
+- Engine suite: `Logs/engine-tests.log`.
+- Shock lag/loss: `Logs/network-lag80-loss5/20260927-082147-406/`.
+- Shock no simulation: `Logs/network-lag0-loss0/20260927-082413-107/`.
+- Sniper lag/loss: `Logs/network-sniper-lag80-loss5/20260927-082232-303/`.
+- Sniper no simulation: `Logs/network-sniper-lag0-loss0/20260927-082254-781/`.
+- Rockets lag/loss: `Logs/network-rockets-lag80-loss5/20260927-082316-959/`.
+- Rockets no simulation: `Logs/network-rockets-lag0-loss0/20260927-082346-083/`.
+- Stock connection: `Logs/network-stock-baseline/20260927-082436-904/`.
+- Stock sniper control: `Logs/network-stocksniper-lag80-loss5/20260927-081856-630/` (same stock-control source, before the Shock diagnostic subclass was added).
+- Earlier failures/comparisons: `Logs/diagnostic-runs/`.
+- The ZIP copies final logs into `Evidence/<case>/`, includes the diagnostic runs and the earlier collision/ownership pre-fix reproduction, and records gameplay binary/source SHA-256 hashes in `manifest.json`.

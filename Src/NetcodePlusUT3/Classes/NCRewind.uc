@@ -1,8 +1,9 @@
-// Server-only Shock body rewind. No client hit claims; live actors never move.
+// Server-only history and measured compensation. Live actors never move.
 class NCRewind extends Info;
 
 var float MaxRewindSeconds;
 var float MaxCoreCatchupSeconds;
+var float MaxRocketCatchupSeconds;
 var array<NCPawnHistory> Histories;
 var array<NCPing> Pings;
 
@@ -31,6 +32,11 @@ function float RewindFor(Pawn Shooter)
 function float CoreCatchupFor(Pawn Shooter)
 {
     return MeasuredDelayFor(Shooter,FClamp(MaxCoreCatchupSeconds,0.0,0.10));
+}
+
+function float RocketCatchupFor(Pawn Shooter)
+{
+    return MeasuredDelayFor(Shooter,FClamp(MaxRocketCatchupSeconds,0.0,0.10));
 }
 
 function float MeasuredDelayFor(Pawn Shooter, float Limit)
@@ -99,14 +105,14 @@ function bool TraceShot(UTWeapon W, vector Start, vector End,
 }
 
 function bool TraceAt(UTWeapon W, vector Start, vector End, float TargetTime,
-    out Weapon.ImpactInfo Impact, out array<Weapon.ImpactInfo> Impacts)
+    out Weapon.ImpactInfo Impact, out array<Weapon.ImpactInfo> Impacts, optional bool bRequireHeadHistory)
 {
     local Actor A, TraceOwner;
-    local vector HL, HN, Position;
+    local vector HL, HN, Position, HeadPosition;
     local TraceHitInfo HitInfo;
-    local float Length, Best, Fraction, Radius, Height;
+    local float Length, Best, Fraction, Radius, Height, HeadRadius;
     local int i, j;
-    local NCPawnHistory H;
+    local NCPawnHistory H, BestHistory;
     local Weapon.ImpactInfo Empty, Candidate;
     local array<Weapon.ImpactInfo> PassHits;
     if (Role != ROLE_Authority || W == None) return false;
@@ -133,7 +139,13 @@ function bool TraceAt(UTWeapon W, vector Start, vector End, float TargetTime,
         // Preserve stock portal recursion and native vehicle/non-UTPawn semantics.
         if (PortalTeleporter(A) != None || Vehicle(A) != None || (Pawn(A) != None && UTPawn(A) == None)) return false;
         H=FindHistory(UTPawn(A));
-        if (H != None && H.AtTime(TargetTime,Position,Radius,Height)) continue;
+        if (H != None && H.AtTime(TargetTime,Position,Radius,Height))
+        {
+            // A sniper must not erase a live custom-pawn hit before discovering
+            // that its historical head decision cannot be represented safely.
+            if (bRequireHeadHistory && !H.HeadAtTime(TargetTime,HeadPosition,HeadRadius)) return false;
+            continue;
+        }
         if (!A.bBlockActors && !A.bProjTarget) continue;
         Candidate=Empty;
         Candidate.HitActor=A;
@@ -158,6 +170,7 @@ function bool TraceAt(UTWeapon W, vector Start, vector End, float TargetTime,
         if (class'NCRewindMath'.static.SegmentCylinder(Start,End,Position,Radius,Height,Fraction,HN) && Fraction < Best)
         {
             Best=Fraction;
+            BestHistory=H;
             Impact=Empty;
             Impact.HitActor=H.Tracked;
             Impact.HitLocation=Start+(End-Start)*Fraction;
@@ -165,6 +178,10 @@ function bool TraceAt(UTWeapon W, vector Start, vector End, float TargetTime,
             Impact.RayDir=Normal(End-Start);
         }
     }
+    // Registration order cannot let an unsupported pawn behind the selected
+    // historical hit disable sniper compensation. Validate only the winner.
+    if (bRequireHeadHistory && BestHistory != None
+        && !BestHistory.HeadAtTime(TargetTime,HeadPosition,HeadRadius)) return false;
     // Only impacts before the blocking result receive damage, in ray order.
     for (i=0;i<PassHits.Length;i++)
     {
@@ -182,6 +199,7 @@ defaultproperties
 {
     MaxRewindSeconds=0.15
     MaxCoreCatchupSeconds=0.06
+    MaxRocketCatchupSeconds=0.06
     RemoteRole=ROLE_None
     bAlwaysTick=true
     TickGroup=TG_PostAsyncWork

@@ -6,6 +6,13 @@ struct Frame
     var float Time;
     var vector Position;
     var float Radius, Height;
+    var vector HeadPosition;
+    var float HeadRadius;
+    var bool bHeadValid;
+    var SkeletalMesh HeadMesh;
+    var name HeadBone;
+    var rotator Facing;
+    var float HeadHeight;
 };
 var UTPawn Tracked;
 var Frame Frames[128];
@@ -54,7 +61,33 @@ function Record(float Now)
     if (!IsLive()) { Clear(); return; }
     F.Time=Now;
     F.Position=Tracked.Location;
+    F.Facing=Tracked.Rotation;
+    F.HeadHeight=Tracked.HeadHeight;
     Tracked.GetBoundingCylinder(F.Radius,F.Height);
+    // Head sampling is limited to pawns that support the scoped stock headshot
+    // decision. The same-time body update reuses a matching mesh/position sample.
+    if (NCPawn(Tracked) != None && Tracked.Mesh != None && Tracked.Mesh.SkeletalMesh != None
+        && Tracked.HeadBone != '' && Tracked.Mesh.MatchRefBone(Tracked.HeadBone) != INDEX_NONE)
+    {
+        F.HeadMesh=Tracked.Mesh.SkeletalMesh;
+        F.HeadBone=Tracked.HeadBone;
+        Previous=(NextIndex+127)%128;
+        if (Count > 0 && Frames[Previous].Time == Now && Frames[Previous].Position == F.Position
+            && SameLifetime() && Frames[Previous].HeadMesh == F.HeadMesh && Frames[Previous].HeadBone == F.HeadBone
+            && Frames[Previous].Facing == F.Facing && Frames[Previous].HeadHeight == F.HeadHeight)
+        {
+            F.HeadPosition=Frames[Previous].HeadPosition;
+            F.bHeadValid=Frames[Previous].bHeadValid;
+        }
+        else
+        {
+            Tracked.Mesh.ForceSkelUpdate();
+            F.HeadPosition=Tracked.Mesh.GetBoneLocation(Tracked.HeadBone)+vect(0,0,1)*Tracked.HeadHeight;
+            F.bHeadValid=true;
+        }
+        F.HeadRadius=Tracked.HeadRadius*Tracked.HeadScale;
+        if (F.HeadRadius <= 0) F.bHeadValid=false;
+    }
     if (Count > 0)
     {
         Previous=(NextIndex+127)%128;
@@ -80,6 +113,26 @@ function Record(float Now)
 
 function bool AtTime(float Time, out vector Position, out float Radius, out float Height)
 {
+    local Frame F;
+    if (!FrameAtTime(Time,F)) return false;
+    Position=F.Position;
+    Radius=F.Radius;
+    Height=F.Height;
+    return true;
+}
+
+function bool HeadAtTime(float Time, out vector HeadPosition, out float HeadRadius)
+{
+    local Frame F;
+    if (NCPawn(Tracked) == None || Tracked.Mesh == None || !FrameAtTime(Time,F) || !F.bHeadValid
+        || Tracked.Mesh.SkeletalMesh != F.HeadMesh || Tracked.HeadBone != F.HeadBone) return false;
+    HeadPosition=F.HeadPosition;
+    HeadRadius=F.HeadRadius;
+    return true;
+}
+
+function bool FrameAtTime(float Time, out Frame F)
+{
     local int i, Index, Previous, Oldest;
     local float Alpha, DT;
     if (Count == 0 || !SameLifetime()) return false;
@@ -89,18 +142,20 @@ function bool AtTime(float Time, out vector Position, out float Radius, out floa
     {
         Index=(Oldest+i)%128;
         if (Frames[Index].Time < Time) continue;
-        Position=Frames[Index].Position;
-        Radius=Frames[Index].Radius;
-        Height=Frames[Index].Height;
+        F=Frames[Index];
         if (i > 0)
         {
             Previous=(Index+127)%128;
             DT=Frames[Index].Time-Frames[Previous].Time;
             if (DT <= 0 || DT > 0.1) return false;
             Alpha=FClamp((Time-Frames[Previous].Time)/DT,0.0,1.0);
-            Position=Frames[Previous].Position+(Position-Frames[Previous].Position)*Alpha;
-            Radius=FMin(Radius,Frames[Previous].Radius);
-            Height=FMin(Height,Frames[Previous].Height);
+            F.Position=Frames[Previous].Position+(F.Position-Frames[Previous].Position)*Alpha;
+            F.Radius=FMin(F.Radius,Frames[Previous].Radius);
+            F.Height=FMin(F.Height,Frames[Previous].Height);
+            F.HeadPosition=Frames[Previous].HeadPosition+(F.HeadPosition-Frames[Previous].HeadPosition)*Alpha;
+            F.HeadRadius=FMin(F.HeadRadius,Frames[Previous].HeadRadius);
+            F.bHeadValid=F.bHeadValid && Frames[Previous].bHeadValid
+                && F.HeadMesh == Frames[Previous].HeadMesh && F.HeadBone == Frames[Previous].HeadBone;
         }
         return true;
     }
