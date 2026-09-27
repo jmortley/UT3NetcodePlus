@@ -1,14 +1,14 @@
 // Real owning-client calls through inherited UT3 firing and loading states.
 class NCTestWeaponClientDriver extends Info;
 
-var bool bReported, bPassed, bStockSniper;
+var bool bReported, bPassed, bStockSniper, bStockFlak;
 var int Stage, TestLag, TestLoss;
 var float StageAt;
 var UTWeapon W;
 
 replication
 {
-    if (Role == ROLE_Authority) TestLag, TestLoss, bStockSniper;
+    if (Role == ROLE_Authority) TestLag, TestLoss, bStockSniper, bStockFlak;
 }
 
 simulated event Tick(float DeltaTime)
@@ -23,7 +23,11 @@ simulated event Tick(float DeltaTime)
     {
         if (W.Class != class'UTWeap_SniperRifle') return;
     }
-    else if (NCSniperRifle(W) == None && NCRocketLauncher(W) == None) return;
+    else if (bStockFlak)
+    {
+        if (W.Class != class'UTWeap_FlakCannon') return;
+    }
+    else if (NCSniperRifle(W) == None && NCRocketLauncher(W) == None && NCFlakCannon(W) == None) return;
     if (Stage == 0)
     {
         if (!W.IsInState('Active')) return;
@@ -37,7 +41,7 @@ simulated event Tick(float DeltaTime)
         PC.SetRotation(rot(0,0,0));
         LogWeaponState("primary-start");
         W.StartFire(0);
-        if (NCRocketLauncher(W) != None) W.StopFire(0);
+        if (NCRocketLauncher(W) != None || UTWeap_FlakCannon(W) != None) W.StopFire(0);
         Stage=2; StageAt=WorldInfo.TimeSeconds;
     }
     else if (Stage == 2 && WorldInfo.TimeSeconds-StageAt > 2.8)
@@ -54,6 +58,12 @@ simulated event Tick(float DeltaTime)
             W.StartFire(1);
             Stage=4; StageAt=WorldInfo.TimeSeconds;
         }
+        else if (UTWeap_FlakCannon(W) != None)
+        {
+            LogWeaponState("secondary-tap");
+            W.StartFire(1); W.StopFire(1);
+            Stage=5; StageAt=WorldInfo.TimeSeconds;
+        }
         else ReportResult(3);
     }
     else if (Stage == 4 && WorldInfo.TimeSeconds-StageAt > 2.5)
@@ -61,7 +71,8 @@ simulated event Tick(float DeltaTime)
         W.StopFire(1);
         Stage=5; StageAt=WorldInfo.TimeSeconds;
     }
-    else if (Stage == 5 && WorldInfo.TimeSeconds-StageAt > 2.0) ReportResult(4);
+    else if (Stage == 5 && WorldInfo.TimeSeconds-StageAt > 2.0)
+        ReportResult((UTWeap_FlakCannon(W) != None) ? 2 : 4);
 }
 
 simulated function ReportResult(int ExpectedAmmoSpent)
@@ -71,6 +82,7 @@ simulated function ReportResult(int ExpectedAmmoSpent)
     Passed=W.AmmoCount == W.MaxAmmoCount-ExpectedAmmoSpent && W.IsInState('Active')
         && !W.PendingFire(0) && !W.PendingFire(1);
     if (bStockSniper) Passed=Passed && W.Class == class'UTWeap_SniperRifle';
+    else if (bStockFlak) Passed=Passed && W.Class == class'UTWeap_FlakCannon';
     else Passed=Passed && NCPawn(W.Instigator) != None;
     LogInternal("[NCNetClient] Result weapon=" $ W.Class $ " ammo=" $ W.AmmoCount
         $ " state=" $ W.GetStateName() $ " pass=" $ Passed);

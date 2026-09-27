@@ -4,6 +4,7 @@ class NCRewind extends Info;
 var float MaxRewindSeconds;
 var float MaxCoreCatchupSeconds;
 var float MaxRocketCatchupSeconds;
+var float MaxFlakCatchupSeconds;
 var array<NCPawnHistory> Histories;
 var array<NCPing> Pings;
 
@@ -37,6 +38,11 @@ function float CoreCatchupFor(Pawn Shooter)
 function float RocketCatchupFor(Pawn Shooter)
 {
     return MeasuredDelayFor(Shooter,FClamp(MaxRocketCatchupSeconds,0.0,0.10));
+}
+
+function float FlakCatchupFor(Pawn Shooter)
+{
+    return MeasuredDelayFor(Shooter,FClamp(MaxFlakCatchupSeconds,0.0,0.10));
 }
 
 function float MeasuredDelayFor(Pawn Shooter, float Limit)
@@ -200,6 +206,7 @@ defaultproperties
     MaxRewindSeconds=0.15
     MaxCoreCatchupSeconds=0.06
     MaxRocketCatchupSeconds=0.06
+    MaxFlakCatchupSeconds=0.06
     RemoteRole=ROLE_None
     bAlwaysTick=true
     TickGroup=TG_PostAsyncWork

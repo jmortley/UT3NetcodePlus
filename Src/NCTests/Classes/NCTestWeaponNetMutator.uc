@@ -1,13 +1,15 @@
 class NCTestWeaponNetMutator extends UTMutator;
 
 var array<NCTestWeaponClientDriver> Drivers;
-var bool bEnding, bStockSniper;
+var array<NCTestFlakSnapshotProbe> FlakProbes;
+var bool bEnding, bStockSniper, bStockFlak;
 var float StartedAt;
 
 function PostBeginPlay()
 {
     Super.PostBeginPlay();
     bStockSniper=NCTestWeaponNetGame(WorldInfo.Game).TestWeapon ~= "StockSniper";
+    bStockFlak=NCTestWeaponNetGame(WorldInfo.Game).TestWeapon ~= "StockFlak";
     StartedAt=WorldInfo.TimeSeconds;
     SetTimer(0.25,true,'Service');
     LogInternal("[NCNet] server-ready");
@@ -18,9 +20,11 @@ function Service()
 {
     local PlayerController PC;
     local NCTestWeaponClientDriver D;
+    local NCTestFlakSnapshotProbe Probe;
     local UTWeapon W;
     local NCSniperRifle Sniper;
     local NCRocketLauncher Rockets;
+    local NCFlakCannon Flak;
     local NCRewind N;
     local NCPawnHistory History;
     local vector HeadPosition;
@@ -41,7 +45,11 @@ function Service()
         {
             if (W.Class != class'UTWeap_SniperRifle') continue;
         }
-        else if (NCSniperRifle(W) == None && NCRocketLauncher(W) == None) continue;
+        else if (bStockFlak)
+        {
+            if (W.Class != class'UTWeap_FlakCannon') continue;
+        }
+        else if (NCSniperRifle(W) == None && NCRocketLauncher(W) == None && NCFlakCannon(W) == None) continue;
         PC.Pawn.SetPhysics(PHYS_Flying);
         PC.GotoState('PlayerFlying'); PC.ClientGotoState('PlayerFlying');
         PC.Pawn.SetLocation(vect(0,0,10000)+vect(0,3000,0)*Drivers.Length);
@@ -55,12 +63,19 @@ function Service()
             D.TestLag=NCTestNetGame(WorldInfo.Game).TestLag;
             D.TestLoss=NCTestNetGame(WorldInfo.Game).TestLoss;
             D.bStockSniper=bStockSniper;
+            D.bStockFlak=bStockFlak;
             Drivers.AddItem(D);
+            if (NCFlakCannon(W) != None)
+            {
+                Probe=Spawn(class'NCTestFlakSnapshotProbe',PC);
+                if (Probe != None) Probe.Initialize(Drivers.Length-1);
+                FlakProbes.AddItem(Probe);
+            }
             LogInternal("[NCNet] registered " $ PC $ " weapon=" $ W.Class $ " pawn=" $ PC.Pawn.Class);
         }
     }
     Passed=true;
-    if (!bStockSniper) N=class'NCRewind'.static.Find(self);
+    if (!bStockSniper && !bStockFlak) N=class'NCRewind'.static.Find(self);
     for (i=0;i<Drivers.Length;i++)
     {
         if (!Drivers[i].bReported) continue;
@@ -69,18 +84,30 @@ function Service()
     }
     if (Finished >= 2)
     {
-        if (!bStockSniper) N.RecordPawns();
+        for (i=0;i<FlakProbes.Length;i++)
+        {
+            Passed=Passed && FlakProbes[i] != None;
+            if (FlakProbes[i] != None)
+                Passed=Passed && FlakProbes[i].bReported && FlakProbes[i].bPassed;
+        }
+        if (!bStockSniper && !bStockFlak) N.RecordPawns();
         for (i=0;i<Drivers.Length;i++)
         {
             PC=PlayerController(Drivers[i].Owner);
             W=UTWeapon(PC.Pawn.Weapon);
             Passed=Passed && W != None && W.IsInState('Active') && !W.PendingFire(0) && !W.PendingFire(1);
-            if (!bStockSniper) Passed=Passed && NCPawn(PC.Pawn) != None;
-            Sniper=NCSniperRifle(W); Rockets=NCRocketLauncher(W);
+            if (!bStockSniper && !bStockFlak) Passed=Passed && NCPawn(PC.Pawn) != None;
+            Sniper=NCSniperRifle(W); Rockets=NCRocketLauncher(W); Flak=NCFlakCannon(W);
             if (bStockSniper)
             {
                 Passed=Passed && W.Class == class'UTWeap_SniperRifle' && W.AmmoCount == W.MaxAmmoCount-3;
                 LogInternal("[NCNet] stock sniper ammo=" $ W.AmmoCount $ " state=" $ W.GetStateName()
+                    $ " pending=" $ W.PendingFire(0) $ "/" $ W.PendingFire(1));
+            }
+            else if (bStockFlak)
+            {
+                Passed=Passed && W.Class == class'UTWeap_FlakCannon' && W.AmmoCount == W.MaxAmmoCount-2;
+                LogInternal("[NCNet] stock flak ammo=" $ W.AmmoCount $ " state=" $ W.GetStateName()
                     $ " pending=" $ W.PendingFire(0) $ "/" $ W.PendingFire(1));
             }
             else if (Sniper != None)
@@ -101,10 +128,21 @@ function Service()
                 LogInternal("[NCNet] rockets ammo=" $ W.AmmoCount $ " spawned=" $ Rockets.SpawnedRocketCount
                     $ " caught-up=" $ Rockets.CaughtUpRocketCount $ " catchup-seconds=" $ Rockets.LastRocketCatchup);
             }
+            else if (Flak != None)
+            {
+                Passed=Passed && W.AmmoCount == W.MaxAmmoCount-2
+                    && Flak.SpawnedShardCount == 9 && Flak.SpawnedShellCount == 1;
+                if (NCTestNetGame(WorldInfo.Game).TestLag >= 60)
+                    Passed=Passed && Flak.CaughtUpShardCount == 9 && Flak.CaughtUpShellCount == 1
+                        && Abs(Flak.LastFlakCatchup-0.06) < 0.001;
+                LogInternal("[NCNet] flak ammo=" $ W.AmmoCount $ " shards=" $ Flak.SpawnedShardCount
+                    $ " shells=" $ Flak.SpawnedShellCount $ " caught-up-shards=" $ Flak.CaughtUpShardCount
+                    $ " caught-up-shells=" $ Flak.CaughtUpShellCount $ " catchup-seconds=" $ Flak.LastFlakCatchup);
+            }
             else Passed=false;
             Drivers[i].ClientQuit();
         }
-        if (!bStockSniper)
+        if (!bStockSniper && !bStockFlak)
         {
             for (i=0;i<N.Pings.Length;i++)
             {

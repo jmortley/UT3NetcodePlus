@@ -2,7 +2,7 @@ param(
     [string]$UT3Root = 'C:\Program Files (x86)\Steam\steamapps\common\Unreal Tournament 3',
     [switch]$SkipBuild,
     [switch]$StockBaseline,
-    [ValidateSet('Shock','Sniper','StockSniper','Rockets')][string]$Weapon='Shock',
+    [ValidateSet('Shock','Sniper','StockSniper','Rockets','Flak','StockFlak')][string]$Weapon='Shock',
     [ValidateRange(0,200)][int]$LagMs=0,
     [ValidateRange(0,20)][int]$LossPercent=0
 )
@@ -26,7 +26,7 @@ try {
     $gameUrl='DM-Deck?game=NCTests.NCTestNetGame?mutator=NetcodePlusUT3.NCMutator,NCTests.NCTestNetMutator?bIsLanMatch=true?numplay=0'
     if ($Weapon -ne 'Shock') {
         $weaponMutators='NetcodePlusUT3.NCMutator,NCTests.NCTestWeaponNetMutator'
-        if ($Weapon -eq 'StockSniper') { $weaponMutators='NCTests.NCTestWeaponNetMutator' }
+        if ($Weapon -eq 'StockSniper' -or $Weapon -eq 'StockFlak') { $weaponMutators='NCTests.NCTestWeaponNetMutator' }
         $gameUrl="DM-Deck?game=NCTests.NCTestWeaponNetGame?mutator=$weaponMutators`?bIsLanMatch=true?numplay=0?TestWeapon=$Weapon"
     }
     $gameUrl+="?TestLag=$LagMs`?TestLoss=$LossPercent"

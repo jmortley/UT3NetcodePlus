@@ -4,6 +4,7 @@ class NCMutator extends UTMutator config(NetcodePlusUT3);
 var config float MaxRewindSeconds;
 var config float MaxCoreCatchupSeconds;
 var config float MaxRocketCatchupSeconds;
+var config float MaxFlakCatchupSeconds;
 var config bool bPredictCores;
 var NCRewind Rewind;
 
@@ -16,11 +17,13 @@ function PostBeginPlay()
     MaxRewindSeconds=FClamp(MaxRewindSeconds,0.0,0.25);
     MaxCoreCatchupSeconds=FClamp(MaxCoreCatchupSeconds,0.0,0.10);
     MaxRocketCatchupSeconds=FClamp(MaxRocketCatchupSeconds,0.0,0.10);
+    MaxFlakCatchupSeconds=FClamp(MaxFlakCatchupSeconds,0.0,0.10);
     Rewind=Spawn(class'NCRewind');
     if (Rewind == None) { LogInternal("[NetcodePlusUT3] Initialization failed: history service"); return; }
     Rewind.MaxRewindSeconds=MaxRewindSeconds;
     Rewind.MaxCoreCatchupSeconds=MaxCoreCatchupSeconds;
     Rewind.MaxRocketCatchupSeconds=MaxRocketCatchupSeconds;
+    Rewind.MaxFlakCatchupSeconds=MaxFlakCatchupSeconds;
     G=UTGame(WorldInfo.Game);
     if (G != None)
     {
@@ -42,6 +45,7 @@ function class<UTWeapon> ReplacementFor(class<UTWeapon> WeaponClass)
     if (WeaponClass == class'UTWeap_ShockRifle') return class'NCShockRifle';
     if (WeaponClass == class'UTWeap_SniperRifle') return class'NCSniperRifle';
     if (WeaponClass == class'UTWeap_RocketLauncher') return class'NCRocketLauncher';
+    if (WeaponClass == class'UTWeap_FlakCannon') return class'NCFlakCannon';
     return WeaponClass;
 }
 
@@ -99,6 +103,7 @@ defaultproperties
     MaxRewindSeconds=0.15
     MaxCoreCatchupSeconds=0.06
     MaxRocketCatchupSeconds=0.06
+    MaxFlakCatchupSeconds=0.06
     bPredictCores=true
     GroupNames(0)="NetcodePlusUT3"
 }

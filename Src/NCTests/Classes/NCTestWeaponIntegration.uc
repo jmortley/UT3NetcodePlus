@@ -47,6 +47,8 @@ function Run(NCTestMutator T)
     CheckPriority(T,class'UTWeap_SniperRifle',class'NCSniperRifle',"sniper default fallback",-1);
     CheckPriority(T,class'UTWeap_RocketLauncher',class'NCRocketLauncher',"rocket positive",97.25);
     CheckPriority(T,class'UTWeap_RocketLauncher',class'NCRocketLauncher',"rocket default fallback",-1);
+    CheckPriority(T,class'UTWeap_FlakCannon',class'NCFlakCannon',"flak positive",97.25);
+    CheckPriority(T,class'UTWeap_FlakCannon',class'NCFlakCannon',"flak default fallback",-1);
     Destroy();
 }
 

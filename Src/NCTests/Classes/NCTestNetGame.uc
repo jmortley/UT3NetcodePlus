@@ -20,4 +20,5 @@ defaultproperties
     DefaultInventory(1)=None
     DefaultInventory(2)=None
     bUseSeamlessTravel=false
+    PlayerControllerClass=class'NCTestInputIsolatedController'
 }

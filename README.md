@@ -1,6 +1,6 @@
 # NetcodePlusUT3 — Weapon alpha
 
-An independently compiled UT3 UnrealScript package covering **Shock, Sniper Rifle and Rocket Launcher**. Target: UT3 build 3809. This is a selective UT3 implementation, not full UT4 NetcodePlus parity.
+An independently compiled UT3 UnrealScript package covering **Shock, Sniper Rifle, Rocket Launcher and Flak Cannon**. Target: UT3 build 3809. This is a selective UT3 implementation, not full UT4 NetcodePlus parity.
 
 ## Included
 
@@ -15,7 +15,8 @@ An independently compiled UT3 UnrealScript package covering **Shock, Sniper Rifl
 - Stock authoritative collision, splash damage, core/core destruction and Shock combos. Primary and secondary firing RPCs, state transitions, refire intervals and ammo consumption remain inherited.
 - Sniper head centers and radii are sampled from the stock skeletal head geometry and interpolated at the same time as the body. A scoped `NCPawn.IsLocationOnHead` override lets stock `TakeHeadShot` retain helmet absorption, damage types and headshot effects. Slow/running shooter scaling, zoom, cadence and ammo rules remain stock. Missing head history and unsupported custom pawns use stock traces.
 - Rocket primary, loaded spread and launcher grenades receive at most **60 ms** of measured spawn catch-up by default, with a 100 ms hard cap. Advance starts after stock aiming and load setup. Native physics handles collisions and grenade bounces; grenades consume the corresponding portion of their original fuse. Charging, one/two/three-shot loads, ammo and release states are inherited. Seeking and spiral flight retain stock timing.
-- Normal weapon pickups, lockers, ammo and default-loadout replacement for all three weapons. Spawned adapters retain the corresponding stock weapon-priority preferences. Other weapons and match rules remain stock.
+- Flak primary advances all nine stock shards after the complete spread has been generated; alternate fire advances the stock shell trajectory. Both use a separate **60 ms** default and 100 ms hard cap. Native collisions, bounce rules, center-shard bonus aging and shell splash remain stock. A shell impact creates five ordinary shards without a second latency advance. Initial replication carries the remaining bounce budget and lifetime to clients.
+- Normal weapon pickups, lockers, ammo and default-loadout replacement for all four weapons. Spawned adapters retain the corresponding stock weapon-priority preferences. Other weapons and match rules remain stock.
 
 ## Current boundaries
 
@@ -27,13 +28,15 @@ Stock teleporters and the translocator update `UTPawn.BigTeleportCount`. A custo
 
 The mutator replaces only an exact stock `UTPawn` default with `NCPawn`; it does not replace a custom game mode's pawn class. The adapter changes only the scoped headshot decision and delegates ordinary head tests to stock. Sniper compensation falls back when compatible head history is unavailable, or stock console/aim-assist behavior requires its own trace. Head sampling forces skeletal updates; large-player-count performance and animated-pose accuracy still need playtesting.
 
-Rocket support currently advances authoritative projectiles at spawn; it does not add client rocket visual prediction or historical projectile-hit claims. Seeking guidance and spiral flock timers are not replayed by the advance, so those modes remain stock. Local/bot shooters and unmeasured/stale connections receive no latency advance. Rocket and Shock catch-up settings are independent.
+Rocket and Flak support currently advance authoritative projectiles at spawn; they do not add client visual prediction or historical projectile-hit claims. Seeking guidance and spiral flock timers are not replayed by the advance, so those rocket modes remain stock. Flak native aiming-help collision (`bWideCheck`) also keeps stock timing. Local/bot shooters and unmeasured/stale connections receive no latency advance. Rocket, Flak and Shock catch-up settings are independent.
+
+Flak catch-up stops when a shell impacts; its child shards start at that impact without receiving the unused advance. It ages shard lifetime before each physics step so native contact damage sees the elapsed center-bonus time. A shard that stops bouncing keeps its stock cleanup timer. Initial state replication corrects the bounce budget, owner collision flag and remaining life; it does not reconcile subsequent client/server bounce divergence. Ordinary client rendering and flight simulation remain inherited.
 
 Matching requests cannot create shots, change aim, move an authoritative core, spend ammo or apply damage. Matching queues and their age are bounded. Expired or unmatched metadata falls back to the replicated server core. Full UT4 fire-event sequencing and retry/authorization machinery have not been transplanted.
 
 Prediction can temporarily fall back to the server core while a new ownership identity replicates. Matching remains ordered within each ownership session. Both endpoints must use this build: the cosmetic metadata RPC signatures differ from the September 22 alpha.
 
-Validation found two intermittent lag/loss failures: one sniper client reported an extra shot and remained in its firing state, and a separate Shock run missed expected visual matches. Later instrumented runs passed with unchanged firing/matching implementations and strict assertions, but the earlier causes remain unestablished. Their evidence and current limits are preserved in `VALIDATION.md`; this remains a playtesting alpha.
+Validation found intermittent lag/loss failures: an earlier sniper client reported an extra shot and remained in its firing state, and Shock sometimes misses expected visual matches. A recent Shock trace shows successful server pairing followed by delayed client actor arrival after its predicted visual was gone; the 750 ms visual timeout is the likely reason. The original sniper cause remains unestablished. Later passes do not resolve those observations. Evidence and limits are preserved in `VALIDATION.md`; this remains a playtesting alpha.
 
 ## Build and test
 
@@ -49,16 +52,21 @@ Requires Windows, PowerShell and a licensed UT3 build 3809 installation. Run Pow
 .\Test-Network.ps1 -SkipBuild -Weapon StockSniper -LagMs 80 -LossPercent 5
 .\Test-Network.ps1 -SkipBuild -Weapon Rockets
 .\Test-Network.ps1 -SkipBuild -Weapon Rockets -LagMs 80 -LossPercent 5
+.\Test-Network.ps1 -SkipBuild -Weapon Flak
+.\Test-Network.ps1 -SkipBuild -Weapon Flak -LagMs 80 -LossPercent 5
+.\Test-Network.ps1 -SkipBuild -Weapon StockFlak -LagMs 80 -LossPercent 5
 .\Test-Network.ps1 -SkipBuild -StockBaseline
 ```
 
 `Test.ps1` builds both the gameplay package and the separate `NCTests` harness. Network testing requires an interactive Windows desktop with Direct3D access and starts a loopback server plus two hidden client processes. The scripts stop only the processes they start. See `VALIDATION.md` for the tested environment and rendering constraints.
 
-`StockSniper` repeats the sniper input sequence with the exact stock weapon and no NetcodePlus mutator. Sniper/rocket network logs include local input times, pending-fire flags and refire timers to help separate input state from replicated ammo updates.
+`StockSniper` and `StockFlak` repeat their input sequences with the exact stock weapons and no NetcodePlus mutator. A test-only controller discards desktop fire commands while the driver calls the weapon directly, keeping incidental mouse input out of automated results. Sniper/rocket/Flak network logs include local input times, pending-fire flags and refire timers to help separate input state from replicated ammo updates.
 
 Build/test configuration overrides and logs live in this directory. The scripts use `-nohomedir -noini -noautoiniupdate` rather than editing the installed engine configuration. Pass `-UT3Root` if UT3 is installed elsewhere. Build output is `Build/NetcodePlusUT3.u`; tests are not required at runtime.
 
-After the engine, all three weapons' lag/loss and no-simulation runs, and stock-baseline checks pass, run `.\Make-Package.ps1` to create `Dist/NetcodePlusUT3-Weapons-alpha.zip` with source, the gameplay package, validation evidence and a hash manifest. Generated binaries, local configuration copies and raw logs are ignored by Git.
+After the engine, all four weapons' lag/loss and no-simulation runs, stock-Flak control and stock connection baseline pass, run `.\Make-Package.ps1` to create `Dist/NetcodePlusUT3-Weapons-alpha.zip` with source, the gameplay package, validation evidence and a hash manifest. Generated binaries, local configuration copies and raw logs are ignored by Git.
+
+The current Flak alpha has 287 passing engine checks and nine passing network cases, with the known Shock lag/loss cosmetic match failure still open. Reproducing this alpha uses `.\Make-Package.ps1 -AllowKnownShockVisualMiss`. This explicit exception accepts only the reviewed failure signature, retains the failed evidence and flags it in the manifest; the network test itself still fails. See `VALIDATION.md` before playtesting.
 
 The installed engine emits pre-existing stock-package NetIndex diagnostics during compilation despite a successful zero-error/zero-warning script compiler summary. Client startup also emits stock HUD/online-service diagnostics; see `VALIDATION.md` for baseline comparisons and actual acceptance results. A compiler success is not a claim that every engine log line is clean.
 
@@ -68,7 +76,7 @@ The installed engine emits pre-existing stock-package NetIndex diagnostics durin
 .\Play.ps1
 ```
 
-This starts a local DM-Deck match using the compiled package and isolated engine search paths. Pick up the Shock Rifle, Sniper Rifle or Rocket Launcher normally. Offline play uses stock projectile rendering and no latency rewind, since there is no remote client delay to compensate. To observe predicted cores, connect through a dedicated server.
+This starts a local DM-Deck match using the compiled package and isolated engine search paths. Pick up the Shock Rifle, Sniper Rifle, Rocket Launcher or Flak Cannon normally. Offline play uses stock projectile rendering and no latency rewind, since there is no remote client delay to compensate. To observe predicted cores, connect through a dedicated server.
 
 ## Install the packaged alpha
 
@@ -76,4 +84,4 @@ The generated ZIP includes an `UTGame` directory. Merge that directory into your
 
 Enable **NetcodePlus UT3 - Weapon Alpha** as a mutator, or append `?mutator=NetcodePlusUT3.NCMutator` to a server map URL. Use this by itself while testing; stacking other weapon/pawn-replacement mutators, including UTComp3's wrappers, has not been validated. Both client and server need the same build. To uninstall, remove these two package-specific files.
 
-Settings are under `[NetcodePlusUT3.NCMutator]`: `MaxRewindSeconds`, `MaxCoreCatchupSeconds`, `MaxRocketCatchupSeconds` and `bPredictCores`. Set either catch-up duration to zero to disable that projectile family's server advance. This is independent of hitscan rewind and Shock visual prediction. The ZIP contains complete mod source and build scripts. It does not contain UT3 engine binaries or assets.
+Settings are under `[NetcodePlusUT3.NCMutator]`: `MaxRewindSeconds`, `MaxCoreCatchupSeconds`, `MaxRocketCatchupSeconds`, `MaxFlakCatchupSeconds` and `bPredictCores`. Set any catch-up duration to zero to disable that projectile family's server advance. This is independent of hitscan rewind and Shock visual prediction. The ZIP contains complete mod source and build scripts. It does not contain UT3 engine binaries or assets.

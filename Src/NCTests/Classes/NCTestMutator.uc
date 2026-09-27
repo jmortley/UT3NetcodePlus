@@ -339,23 +339,31 @@ function TestCatchupMeasurement()
     N.RegisterPlayer(C);
     Check(N.Pings.Length == 1 && N.CoreCatchupFor(P) == 0,"unmeasured connection receives no core catch-up");
     Check(N.RocketCatchupFor(P) == 0,"unmeasured connection receives no rocket catch-up");
+    Check(N.FlakCatchupFor(P) == 0,"unmeasured connection receives no flak catch-up");
     if (N.Pings.Length == 1)
     {
         Ping=N.Pings[0]; Ping.SampleCount=3; Ping.MinimumRTT=0.18; Ping.LastReply=WorldInfo.TimeSeconds;
         N.MaxRewindSeconds=0;
         Check(N.RewindFor(P) == 0 && Abs(N.CoreCatchupFor(P)-0.06) < 0.0001,"core catch-up limit is independent of beam rewind");
         Check(Abs(N.RocketCatchupFor(P)-0.06) < 0.0001,"rocket catch-up is independent of hitscan rewind");
+        N.MaxRocketCatchupSeconds=0;
+        Check(Abs(N.FlakCatchupFor(P)-0.06) < 0.0001,"flak catch-up is independent of hitscan and rocket settings");
         N.MaxCoreCatchupSeconds=0;
         Check(N.CoreCatchupFor(P) == 0,"zero configuration disables core catch-up");
         N.MaxRocketCatchupSeconds=0;
         Check(N.RocketCatchupFor(P) == 0,"zero configuration disables rocket catch-up");
+        N.MaxFlakCatchupSeconds=0;
+        Check(N.FlakCatchupFor(P) == 0,"zero configuration disables flak catch-up");
         N.MaxCoreCatchupSeconds=10; Ping.MinimumRTT=0.5;
         Check(Abs(N.CoreCatchupFor(P)-0.1) < 0.0001,"connection catch-up respects absolute limit");
         N.MaxRocketCatchupSeconds=10;
         Check(Abs(N.RocketCatchupFor(P)-0.1) < 0.0001,"rocket connection catch-up respects absolute limit");
+        N.MaxFlakCatchupSeconds=10;
+        Check(Abs(N.FlakCatchupFor(P)-0.1) < 0.0001,"flak connection catch-up respects absolute limit");
         Ping.LastReply=WorldInfo.TimeSeconds-6;
         Check(N.CoreCatchupFor(P) == 0,"stale measurement receives no core catch-up");
         Check(N.RocketCatchupFor(P) == 0,"stale measurement receives no rocket catch-up");
+        Check(N.FlakCatchupFor(P) == 0,"stale measurement receives no flak catch-up");
         Ping.Destroy();
     }
     P.Destroy(); C.Destroy(); N.Destroy();
@@ -407,6 +415,7 @@ function TestEarlyImpactMatching()
 function Run()
 {
     local int Mode, i, ShockPickups, StockPickups, ShockAmmo, SniperPickups, RocketPickups, SniperAmmo, RocketAmmo;
+    local int FlakPickups, FlakAmmo;
     local UTWeaponPickupFactory Factory;
     local UTAmmoPickupFactory Ammo;
     local vector Position;
@@ -416,6 +425,8 @@ function Run()
         if (Factory.WeaponPickupClass == class'UTWeap_ShockRifle') StockPickups++;
         if (Factory.WeaponPickupClass == class'NCSniperRifle') SniperPickups++;
         if (Factory.WeaponPickupClass == class'NCRocketLauncher') RocketPickups++;
+        if (Factory.WeaponPickupClass == class'NCFlakCannon') FlakPickups++;
+        if (Factory.WeaponPickupClass == class'UTWeap_FlakCannon') StockPickups++;
         if (Factory.WeaponPickupClass == class'UTWeap_SniperRifle' || Factory.WeaponPickupClass == class'UTWeap_RocketLauncher') StockPickups++;
     }
     foreach AllActors(class'UTAmmoPickupFactory',Ammo)
@@ -423,11 +434,13 @@ function Run()
         if (Ammo.TargetWeapon == class'NCShockRifle') ShockAmmo++;
         if (Ammo.TargetWeapon == class'NCSniperRifle') SniperAmmo++;
         if (Ammo.TargetWeapon == class'NCRocketLauncher') RocketAmmo++;
+        if (Ammo.TargetWeapon == class'NCFlakCannon') FlakAmmo++;
     }
     Check(ShockPickups > 0 && StockPickups == 0,"DM-Deck Shock pickup replacement");
     Check(ShockAmmo > 0,"DM-Deck Shock ammo integration");
     Check(SniperPickups > 0 && SniperAmmo > 0,"DM-Deck sniper pickup and ammo integration");
     Check(RocketPickups > 0 && RocketAmmo > 0,"DM-Deck rocket pickup and ammo integration");
+    Check(FlakPickups > 0 && FlakAmmo > 0,"DM-Deck flak pickup and ammo integration");
     Check(WorldInfo.Game.DefaultPawnClass == class'NCPawn',"stock pawn uses scoped sniper head-test adapter");
     TestHistoryAndImpacts();
     TestCollisionEligibility();
@@ -439,6 +452,8 @@ function Run()
     Spawn(class'NCTestSniper').Run(self);
     Spawn(class'NCTestSniperFallback').Run(self);
     Spawn(class'NCTestRockets').Run(self);
+    Spawn(class'NCTestFlak').Run(self);
+    Spawn(class'NCTestFlakNativeTiming').Run(self);
     Spawn(class'NCTestWeaponIntegration').Run(self);
     for (Mode=0;Mode<2;Mode++)
     {
