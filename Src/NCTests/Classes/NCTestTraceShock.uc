@@ -25,13 +25,13 @@ function ServiceMatches()
     for (i=0;i<Requests.Length;i++)
         LogInternal("[NCMatchTrace] queued-request time=" $ WorldInfo.TimeSeconds $ " weapon=" $ self
             $ " id=" $ Requests[i].Id $ " age=" $ (WorldInfo.TimeSeconds-Requests[i].Time)
-            $ " over-window=" $ (WorldInfo.TimeSeconds-Requests[i].Time > 0.25));
+            $ " over-window=" $ (WorldInfo.TimeSeconds-Requests[i].Time > RequestMatchWindow));
     for (i=0;i<UnmatchedCores.Length;i++)
     {
         BeforeCores.AddItem(UnmatchedCores[i].Core);
         LogInternal("[NCMatchTrace] queued-core time=" $ WorldInfo.TimeSeconds $ " weapon=" $ self
             $ " core=" $ UnmatchedCores[i].Core $ " age=" $ (WorldInfo.TimeSeconds-UnmatchedCores[i].Time)
-            $ " over-window=" $ (WorldInfo.TimeSeconds-UnmatchedCores[i].Time > 0.25));
+            $ " over-window=" $ (WorldInfo.TimeSeconds-UnmatchedCores[i].Time > MatchWindow));
     }
     Super.ServiceMatches();
     for (i=0;i<BeforeCores.Length;i++)

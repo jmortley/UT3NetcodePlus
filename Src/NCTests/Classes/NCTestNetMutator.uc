@@ -44,6 +44,7 @@ function Service()
         {
             D.TestLag=NCTestNetGame(WorldInfo.Game).TestLag;
             D.TestLoss=NCTestNetGame(WorldInfo.Game).TestLoss;
+            D.bDelayedShock=NCTestNetGame(WorldInfo.Game).bDelayedShock;
             Drivers.AddItem(D); LogInternal("[NCNet] registered " $ PC);
         }
     }

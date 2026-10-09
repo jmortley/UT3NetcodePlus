@@ -9,9 +9,10 @@ var float StageAt;
 var float NextDebugAt;
 var NCShockRifle W;
 var int TestLag, TestLoss;
+var bool bDelayedShock;
 replication
 {
-    if (Role == ROLE_Authority) TestLag, TestLoss;
+    if (Role == ROLE_Authority) TestLag, TestLoss, bDelayedShock;
 }
 
 simulated function PostBeginPlay()
@@ -23,6 +24,7 @@ simulated function PostBeginPlay()
 simulated event Tick(float DeltaTime)
 {
     local PlayerController PC;
+    local int LateMatches;
     if (Role == ROLE_Authority || Stage >= 8) return;
     PC=PlayerController(Owner);
     if (WorldInfo.TimeSeconds >= NextDebugAt)
@@ -53,7 +55,7 @@ simulated event Tick(float DeltaTime)
         W.StopFire(1);
         Stage=3; StageAt=WorldInfo.TimeSeconds;
     }
-    else if (Stage == 3 && WorldInfo.TimeSeconds-StageAt > 1.0)
+    else if (Stage == 3 && WorldInfo.TimeSeconds-StageAt > (bDelayedShock ? 2.0 : 1.0))
     {
         W.StartFire(0); W.StopFire(0);
         Stage=4; StageAt=WorldInfo.TimeSeconds;
@@ -71,9 +73,10 @@ simulated event Tick(float DeltaTime)
     else if (Stage == 7 && WorldInfo.TimeSeconds-StageAt > 1.5)
     {
         W.PruneVisuals();
+        if (NCTestDelayedShock(W) != None) LateMatches=NCTestDelayedShock(W).LateVisualMatchCount;
         LogInternal("[NCNetClient] Result predicted=" $ W.PredictedVisualCount $ " matched=" $ W.MatchedVisualCount
             $ " retired=" $ W.RetiredVisualCount $ " residual=" $ W.Visuals.Length $ " ammo=" $ W.AmmoCount $ " state=" $ W.GetStateName());
-        ServerResult(W.PredictedVisualCount,W.MatchedVisualCount,W.RetiredVisualCount,W.Visuals.Length,W.AmmoCount,!W.PendingFire(0) && !W.PendingFire(1));
+        ServerResult(W.PredictedVisualCount,W.MatchedVisualCount,W.RetiredVisualCount,W.Visuals.Length,W.AmmoCount,!W.PendingFire(0) && !W.PendingFire(1),LateMatches);
         Stage=8;
     }
 }
@@ -103,7 +106,7 @@ reliable client function ClientImpactReady()
     Stage=6; StageAt=WorldInfo.TimeSeconds;
 }
 
-reliable server function ServerResult(int Created, int Matched, int Retired, int Residual, int Ammo, bool bReleased)
+reliable server function ServerResult(int Created, int Matched, int Retired, int Residual, int Ammo, bool bReleased, int LateMatches)
 {
     if (bReported) return;
     VisualCount=Created; MatchCount=Matched;
@@ -111,9 +114,11 @@ reliable server function ServerResult(int Created, int Matched, int Retired, int
     bPassed=Created == 4 && Matched >= 3 && Matched <= 4 && Retired <= 1
         && (Matched == 4 || Retired == 1) && Residual == 0 && bReleased && bComboVerified;
     if (TestLag >= 60) bPassed=bPassed && Matched == 3 && Retired == 1;
+    if (bDelayedShock) bPassed=bPassed && LateMatches == 3;
     bReported=true;
     LogInternal("[NCNet] client-result player=" $ Owner $ " predicted=" $ Created $ " matched=" $ Matched
         $ " retired=" $ Retired $ " residual=" $ Residual $ " ammo=" $ Ammo $ " released=" $ bReleased $ " pass=" $ bPassed);
+    if (bDelayedShock) LogInternal("[NCNet] delayed-handoff matches-after-750ms=" $ LateMatches $ " pass=" $ bPassed);
 }
 
 reliable client function ClientQuit()

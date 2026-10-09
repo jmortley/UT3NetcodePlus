@@ -2,11 +2,13 @@ param(
     [string]$UT3Root = 'C:\Program Files (x86)\Steam\steamapps\common\Unreal Tournament 3',
     [switch]$SkipBuild,
     [switch]$StockBaseline,
+    [switch]$DelayedShock,
     [ValidateSet('Shock','Sniper','StockSniper','Rockets','Flak','StockFlak')][string]$Weapon='Shock',
     [ValidateRange(0,200)][int]$LagMs=0,
     [ValidateRange(0,20)][int]$LossPercent=0
 )
 $ErrorActionPreference='Stop'
+if ($DelayedShock -and ($Weapon -ne 'Shock' -or $StockBaseline)) { throw 'DelayedShock requires the Shock scenario.' }
 if (-not $SkipBuild) { & (Join-Path $PSScriptRoot 'Build.ps1') -UT3Root $UT3Root -Tests }
 foreach ($package in @('NetcodePlusUT3','NCTests')) {
     if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot "Build\$package.u"))) { throw "Missing compiled $package package" }
@@ -17,6 +19,7 @@ $config=Join-Path $PSScriptRoot 'BuildConfig\RuntimeEngine.ini'
 $runName="network-lag$LagMs-loss$LossPercent"
 if ($Weapon -ne 'Shock') { $runName="network-$($Weapon.ToLowerInvariant())-lag$LagMs-loss$LossPercent" }
 if ($StockBaseline) { $runName='network-stock-baseline' }
+if ($DelayedShock) { $runName="network-delayed-shock-lag$LagMs-loss$LossPercent" }
 $logs=Join-Path $PSScriptRoot ("Logs\$runName\" + (Get-Date).ToString('yyyyMMdd-HHmmss-fff'))
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
 $processes=@()
@@ -30,6 +33,7 @@ try {
         $gameUrl="DM-Deck?game=NCTests.NCTestWeaponNetGame?mutator=$weaponMutators`?bIsLanMatch=true?numplay=0?TestWeapon=$Weapon"
     }
     $gameUrl+="?TestLag=$LagMs`?TestLoss=$LossPercent"
+    if ($DelayedShock) { $gameUrl+='?TestDelayedShock=1' }
     if ($StockBaseline) { $gameUrl='DM-Deck?game=UTGame.UTDeathmatch?mutator=NCTests.NCTestBaseline?bIsLanMatch=true?numplay=0' }
     $server=Start-Process -FilePath $binary -WorkingDirectory $binaryDir -ArgumentList "server `"$gameUrl`" -multihome=127.0.0.1 -port=17999 $common -abslog=`"$serverLog`"" -WindowStyle Hidden -PassThru -RedirectStandardOutput "$serverLog.console.txt" -RedirectStandardError "$serverLog.stderr.txt"
     $processes+=$server

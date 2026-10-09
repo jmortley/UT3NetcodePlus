@@ -1,6 +1,11 @@
 // Stock Start/Stop RPCs, refire states, ammo and charge behavior are inherited.
 class NCShockRifle extends UTWeap_ShockRifle;
 
+const MatchWindow=0.75;
+// A predicted request with no server shot gets a shorter wait; do not extend
+// its opportunity to claim a later stock-authorized shot at normal cadence.
+const RequestMatchWindow=0.25;
+
 struct CoreRecord
 {
     var NCShockBall Core;
@@ -22,6 +27,9 @@ var Pawn MatchOwner;
 var Controller MatchController;
 var float LastRequestAt;
 var bool bPredictionEnabled;
+// A lost FIFO slot cannot safely be assigned to another shot. Fail closed until
+// a real ownership reset; changing the generation alone would not resync firing.
+var bool bMatchingSuspended;
 // Local diagnostics: no replication or effect on firing decisions.
 var int PredictedVisualCount, MatchedVisualCount, RetiredVisualCount;
 var int CaughtUpCoreCount;
@@ -30,7 +38,7 @@ var float LastCoreCatchup;
 replication
 {
     if (bNetInitial && Role == ROLE_Authority) bPredictionEnabled;
-    if (Role == ROLE_Authority) PredictionGeneration;
+    if (Role == ROLE_Authority) PredictionGeneration, bMatchingSuspended;
 }
 
 simulated function PostBeginPlay()
@@ -80,21 +88,31 @@ simulated function Projectile ProjectileFire()
             Record.Time=WorldInfo.TimeSeconds;
             // Retain even a failed spawn/early impact as a completed shot slot.
             // Its metadata retires its own visual instead of matching the next core.
-            UnmatchedCores.AddItem(Record);
-            ServiceMatches();
+            if (bPredictionEnabled && !bMatchingSuspended)
+            {
+                ServiceMatches();
+                if (!bMatchingSuspended)
+                {
+                    if (UnmatchedCores.Length >= 4) SuspendMatching();
+                    else
+                    {
+                        UnmatchedCores.AddItem(Record);
+                        ServiceMatches();
+                    }
+                }
+            }
         }
     }
-    else if (bPredictionEnabled && PredictionGeneration > 0 && Instigator.Controller != None
+    else if (bPredictionEnabled && !bMatchingSuspended && PredictionGeneration > 0 && Instigator.Controller != None
         && Instigator.IsLocallyControlled() && !WorldInfo.bWithinDemoPlayback)
     {
-        PruneVisuals();
-        if (Visuals.Length >= 4) return P;
+        MakeVisualRoom();
+        NextVisualId++;
+        if (NextVisualId <= 0) NextVisualId=1;
         Start=GetPhysicalFireStartLoc();
         Visual=Spawn(class'NCPredictedCore',self,,Start);
         if (Visual != None)
         {
-            NextVisualId++;
-            if (NextVisualId <= 0) NextVisualId=1;
             Visual.VisualId=NextVisualId;
             Visual.PredictionGeneration=PredictionGeneration;
             Visual.PredictionOwner=Instigator;
@@ -102,8 +120,10 @@ simulated function Projectile ProjectileFire()
             Visual.Init(vector(GetAdjustedAim(Start)));
             Visuals.AddItem(Visual);
             PredictedVisualCount++;
-            ServerVisual(NextVisualId,Visual.PredictionGeneration,Visual.PredictionOwner,Visual.PredictionController);
         }
+        // A missing local effect must not skip an identity and shift a later
+        // request onto this stock-authorized server shot's matching slot.
+        ServerVisual(NextVisualId,PredictionGeneration,Instigator,Instigator.Controller);
     }
     return P;
 }
@@ -120,6 +140,7 @@ function ResetPredictionIdentity(Pawn NewOwner)
     Requests.Length=0;
     LastVisualId=0;
     LastRequestAt=-1;
+    bMatchingSuspended=false;
     bNetDirty=true;
     bForceNetUpdate=true;
 }
@@ -158,15 +179,34 @@ reliable server function ServerVisual(int Id, int Generation, Pawn VisualOwner, 
         || VisualOwner == None || VisualController == None || VisualOwner != MatchOwner
         || VisualController != MatchController || Instigator == None
         || Instigator.Health <= 0 || Instigator.Weapon != self
-        || Id <= LastVisualId || WorldInfo.TimeSeconds-LastRequestAt < 0.1) return;
+        || Id <= 0 || Id <= LastVisualId) return;
+    if (LastVisualId > 0 && Id != LastVisualId+1) SuspendMatching();
     LastVisualId=Id;
     LastRequestAt=WorldInfo.TimeSeconds;
     ServiceMatches();
-    if (Requests.Length >= 4) return;
+    if (Requests.Length >= 4) SuspendMatching();
+    if (bMatchingSuspended)
+    {
+        ClientRetireVisual(Id,PredictionGeneration,MatchOwner,MatchController);
+        return;
+    }
     Request.Id=Id;
     Request.Time=WorldInfo.TimeSeconds;
     Requests.AddItem(Request);
     ServiceMatches();
+}
+
+function SuspendMatching()
+{
+    local int i;
+    if (Role != ROLE_Authority || bMatchingSuspended) return;
+    bMatchingSuspended=true;
+    for (i=0;i<Requests.Length;i++)
+        ClientRetireVisual(Requests[i].Id,PredictionGeneration,MatchOwner,MatchController);
+    Requests.Length=0;
+    UnmatchedCores.Length=0;
+    bNetDirty=true;
+    bForceNetUpdate=true;
 }
 
 function ServiceMatches()
@@ -174,11 +214,24 @@ function ServiceMatches()
     local int i;
     // Also protect direct service calls after a possession/ownership change.
     CheckMatchOwner();
+    if (bMatchingSuspended) return;
     for (i=UnmatchedCores.Length-1;i>=0;i--)
-        if (WorldInfo.TimeSeconds-UnmatchedCores[i].Time > 0.25)
-            UnmatchedCores.Remove(i,1);
+        if (WorldInfo.TimeSeconds-UnmatchedCores[i].Time > MatchWindow)
+        {
+            SuspendMatching();
+            return;
+        }
     for (i=Requests.Length-1;i>=0;i--)
-        if (WorldInfo.TimeSeconds-Requests[i].Time > 0.25) Requests.Remove(i,1);
+        if (WorldInfo.TimeSeconds-Requests[i].Time > RequestMatchWindow)
+        {
+            SuspendMatching();
+            return;
+        }
+    if (UnmatchedCores.Length > 4 || Requests.Length > 4)
+    {
+        SuspendMatching();
+        return;
+    }
     while (UnmatchedCores.Length > 0 && Requests.Length > 0)
     {
         if (UnmatchedCores[0].Core != None && !UnmatchedCores[0].Core.bDeleteMe && !UnmatchedCores[0].Core.bShuttingDown)
@@ -187,7 +240,6 @@ function ServiceMatches()
         Requests.Remove(0,1);
         UnmatchedCores.Remove(0,1);
     }
-    while (UnmatchedCores.Length > 4) UnmatchedCores.Remove(0,1);
 }
 
 reliable client function ClientRetireVisual(int Id, int Generation, Pawn VisualOwner, Controller VisualController)
@@ -223,8 +275,7 @@ simulated function MatchVisual(int Id, int Generation, Pawn VisualOwner, Control
             && Visuals[i].PredictionOwner == VisualOwner && Visuals[i].PredictionController == VisualController)
         {
             if (Visuals[i].MatchedCore == Core) return;
-            Visuals[i].MatchTo(Core);
-            if (Core != None && !Core.bDeleteMe && !Core.bShuttingDown) MatchedVisualCount++;
+            if (Visuals[i].MatchTo(Core)) MatchedVisualCount++;
             return;
         }
 }
@@ -236,11 +287,27 @@ simulated function PruneVisuals()
         if (Visuals[i] == None || Visuals[i].bDeleteMe) Visuals.Remove(i,1);
 }
 
+simulated function MakeVisualRoom()
+{
+    local NCPredictedCore Oldest;
+    PruneVisuals();
+    // Keep four effects even under Berserk, while sending metadata for every
+    // shot. Destroyed restores a matched core's visibility before eviction.
+    while (Visuals.Length >= 4)
+    {
+        Oldest=Visuals[0];
+        Visuals.Remove(0,1);
+        Oldest.Destroy();
+    }
+}
+
 simulated function DetachWeapon()
 {
     local int i;
     for (i=0;i<Visuals.Length;i++) if (Visuals[i] != None) Visuals[i].Destroy();
     Visuals.Length=0;
+    if (Role == ROLE_Authority && (UnmatchedCores.Length > 0 || Requests.Length > 0))
+        SuspendMatching();
     UnmatchedCores.Length=0;
     Requests.Length=0;
     Super.DetachWeapon();

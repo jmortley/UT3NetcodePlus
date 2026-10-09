@@ -449,6 +449,8 @@ function Run()
     TestCatchupMeasurement();
     TestEarlyImpactMatching();
     Spawn(class'NCTestCoreOwnership').Run(self);
+    Spawn(class'NCTestCoreHandoff').Run(self);
+    Spawn(class'NCTestCoreQueue').Run(self);
     Spawn(class'NCTestSniper').Run(self);
     Spawn(class'NCTestSniperFallback').Run(self);
     Spawn(class'NCTestRockets').Run(self);

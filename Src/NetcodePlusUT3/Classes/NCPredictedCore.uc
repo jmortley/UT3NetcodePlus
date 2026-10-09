@@ -7,22 +7,28 @@ var Pawn PredictionOwner;
 var Controller PredictionController;
 var NCShockBall MatchedCore;
 var float BlendRemaining;
+var bool bHandoffStarted;
 
-simulated function MatchTo(NCShockBall Core)
+simulated function bool MatchTo(NCShockBall Core)
 {
-    if (Core == None || Core.bDeleteMe || Core.bShuttingDown) { Destroy(); return; }
+    if (bDeleteMe || bShuttingDown || bHandoffStarted || Core == None || Core.bDeleteMe || Core.bShuttingDown) return false;
+    bHandoffStarted=true;
     MatchedCore=Core;
     BlendRemaining=0.12;
+    // A late valid match gets its full blend, independent of the old deadline.
+    // The short watchdog also unhides the real core if visual ticking stalls.
+    LifeSpan=0.20;
     SetPhysics(PHYS_None);
     bCollideWorld=false;
     Core.SetHidden(true);
+    return true;
 }
 
 simulated event Tick(float DeltaTime)
 {
-    if (MatchedCore != None)
+    if (bHandoffStarted)
     {
-        if (MatchedCore.bDeleteMe || MatchedCore.bShuttingDown) { Destroy(); return; }
+        if (MatchedCore == None || MatchedCore.bDeleteMe || MatchedCore.bShuttingDown) { Destroy(); return; }
         SetLocation(Location+(MatchedCore.Location-Location)*FClamp(DeltaTime/FMax(BlendRemaining,0.001),0.0,1.0));
         BlendRemaining-=DeltaTime;
         if (BlendRemaining <= 0) Destroy();
@@ -55,5 +61,7 @@ defaultproperties
     ComboRadius=0
     bSuppressExplosionFX=true
     bSuppressSounds=true
-    LifeSpan=0.75
+    // Finite grace for delayed/reordered authoritative actor replication.
+    // Retirement, world impacts and weapon cleanup can still end it sooner.
+    LifeSpan=1.5
 }
